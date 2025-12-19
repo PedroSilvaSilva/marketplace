@@ -1,0 +1,791 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// UTILIZADORES
+// ============================================
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  userType  UserType @default(USER)
+  status    UserStatus @default(INACTIVE)
+  
+  // Controlo de activação
+  isEmailVerified Boolean @default(false)
+  emailVerificationToken String? @unique
+  emailVerificationExpires DateTime?
+  
+  // MFA (Multi-Factor Authentication)
+  mfaEnabled Boolean @default(false)
+  mfaMethod  MFAMethod?
+  mfaSecret  String?
+  backupCodes String[] @default([])
+  
+  // Reset de password
+  resetPasswordToken String? @unique
+  resetPasswordExpires DateTime?
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  lastLoginAt DateTime?
+  
+  // Relações
+  profile       Profile?
+  sessions      Session[]
+  loginHistory  LoginHistory[]
+  auditLogs     AuditLog[]
+  organizations OrganizationMember[]
+  
+  @@index([email])
+  @@index([status])
+  @@index([userType])
+  @@map("users")
+}
+
+// ============================================
+// PERFIL DO UTILIZADOR
+// ============================================
+
+model Profile {
+  id     String @id @default(uuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Informações pessoais
+  firstName  String?
+  lastName   String?
+  phone      String?
+  avatar     String?
+  birthDate  DateTime?
+  
+  // Morada
+  address    String?
+  city       String?
+  state      String?
+  country    String?
+  postalCode String?
+  
+  // Informações profissionais/empresa (para PARCERIA, CLIENTE)
+  companyName String?
+  companyVat  String?
+  companyAddress String?
+  jobTitle    String?
+  department  String?
+  
+  // Informações técnicas (para DEV, TECNICO)
+  skills      String[] @default([])
+  certifications String[] @default([])
+  specialization String?
+  
+  // Informações de licenças (para LICENCAS)
+  licenseNumber String?
+  licenseExpiry DateTime?
+  licenseType   String?
+  
+  // Preferências
+  language    String @default("pt")
+  timezone    String @default("Europe/Lisbon")
+  notifications Boolean @default(true)
+  
+  // Metadata adicional (JSON flexível para campos específicos)
+  metadata    Json?
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@index([userId])
+  @@map("profiles")
+}
+
+// ============================================
+// SESSÕES
+// ============================================
+
+model Session {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Token e identificação
+  token     String   @unique
+  refreshToken String? @unique
+  
+  // Informações da sessão
+  ipAddress String
+  userAgent String?
+  device    String?
+  browser   String?
+  os        String?
+  
+  // Localização (baseado em IP)
+  country   String?
+  city      String?
+  latitude  Float?
+  longitude Float?
+  
+  // Status
+  onlineStatus OnlineStatus @default(ONLINE)
+  isActive  Boolean @default(true)
+  
+  // Timestamps
+  lastActivity DateTime @default(now())
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  
+  @@index([userId])
+  @@index([token])
+  @@index([isActive])
+  @@map("sessions")
+}
+
+// ============================================
+// HISTÓRICO DE LOGIN
+// ============================================
+
+model LoginHistory {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Resultado do login
+  result    LoginResult
+  reason    String?
+  
+  // Informações do login
+  ipAddress String
+  userAgent String?
+  device    String?
+  browser   String?
+  os        String?
+  
+  // Localização
+  country   String?
+  city      String?
+  latitude  Float?
+  longitude Float?
+  
+  // MFA
+  mfaUsed   Boolean @default(false)
+  mfaMethod MFAMethod?
+  
+  // Timestamp
+  createdAt DateTime @default(now())
+  
+  @@index([userId])
+  @@index([createdAt])
+  @@index([result])
+  @@map("login_history")
+}
+
+// ============================================
+// AUDITORIA E LOGS
+// ============================================
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  
+  // Acção
+  action    AuditAction
+  entity    String   // Ex: "User", "Payment", "License"
+  entityId  String?
+  
+  // Detalhes
+  description String
+  changes   Json?    // Antes/Depois das alterações
+  metadata  Json?    // Informações adicionais
+  
+  // Contexto
+  ipAddress String?
+  userAgent String?
+  
+  // Timestamp
+  createdAt DateTime @default(now())
+  
+  @@index([userId])
+  @@index([action])
+  @@index([entity])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// ============================================
+// ORGANIZAÇÕES E MEMBROS
+// ============================================
+
+model Organization {
+  id          String   @id @default(uuid())
+  name        String
+  slug        String   @unique
+  description String?
+  type        OrganizationType @default(MARKETPLACE)
+  
+  // Contactos
+  email       String
+  phone       String?
+  website     String?
+  logoUrl     String?
+  
+  // Status
+  isActive    Boolean  @default(true)
+  deletedAt   DateTime?
+  
+  // Settings e metadata
+  settings    Json?
+  metadata    Json?
+  
+  // Timestamps
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  // Relations
+  members              OrganizationMember[]
+  providerConfig       ProviderConfig?
+  dataSourceConfig     DataSourceConfig?
+  clientConnections    ClientProviderConnection[] @relation("ClientConnections")
+  providerConnections  ClientProviderConnection[] @relation("ProviderConnections")
+  syncArticles         SyncArticle[]
+  syncedArticles       SyncedArticle[]
+  syncJobs             SyncJob[]
+  syncErrorLogs        SyncErrorLog[]
+  
+  @@index([slug])
+  @@index([type])
+  @@index([isActive])
+  @@map("organizations")
+}
+
+model OrganizationMember {
+  id             String   @id @default(uuid())
+  organizationId String
+  userId         String
+  role           OrganizationRole @default(MEMBER)
+  
+  // Invite system
+  invitedBy      String?
+  inviteToken    String?   @unique
+  inviteExpires  DateTime?
+  inviteAcceptedAt DateTime?
+  
+  // Status
+  isActive       Boolean   @default(true)
+  joinedAt       DateTime  @default(now())
+  
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  
+  @@unique([organizationId, userId])
+  @@index([organizationId])
+  @@index([userId])
+  @@index([inviteToken])
+  @@map("organization_members")
+}
+
+// ============================================
+// PROVIDER CONFIGURATIONS
+// ============================================
+
+model ProviderConfig {
+  id              String   @id @default(uuid())
+  organizationId  String   @unique
+  
+  // API Configuration
+  apiUrl          String
+  apiKey          String?  @db.Text // Encrypted
+  apiSecret       String?  @db.Text // Encrypted
+  clientId        String?
+  clientSecret    String?  @db.Text // Encrypted
+  
+  // Authentication
+  authType        String?  // "API_KEY", "OAUTH2", "BASIC", "BEARER"
+  authEndpoint    String?
+  tokenEndpoint   String?
+  refreshToken    String?  @db.Text // Encrypted
+  tokenExpiresAt  DateTime?
+  
+  // Webhooks
+  webhookUrl      String?
+  webhookSecret   String?  @db.Text // Encrypted
+  webhookEvents   String[] @default([])
+  
+  // Rate Limiting
+  rateLimit       Int?     @default(60) // requests per minute
+  rateLimitWindow Int?     @default(60) // seconds
+  
+  // Retry Configuration
+  maxRetries      Int?     @default(3)
+  retryDelay      Int?     @default(1000) // milliseconds
+  
+  // Field Mappings (JSON)
+  fieldMappings   Json?    // Map local fields to provider fields
+  
+  // Custom Settings
+  settings        Json?    // Provider-specific configs
+  metadata        Json?    // Additional data
+  
+  // Status
+  isActive        Boolean  @default(true)
+  lastSyncAt      DateTime?
+  lastErrorAt     DateTime?
+  lastError       String?
+  
+  // Timestamps
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  // Relations
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  syncArticles    SyncArticle[]
+  syncedArticles  SyncedArticle[]
+  syncJobs        SyncJob[]
+  syncErrorLogs   SyncErrorLog[]
+  
+  @@index([organizationId])
+  @@index([isActive])
+  @@map("provider_configs")
+}
+
+// ============================================
+// CLIENT-PROVIDER CONNECTIONS
+// ============================================
+
+model ClientProviderConnection {
+  id              String   @id @default(uuid())
+  
+  // Organizations
+  clientOrgId     String
+  providerOrgId   String
+  
+  // Provider-specific identifiers
+  merchantId      String?  // ID do cliente no marketplace
+  storeId         String?  // ID da loja
+  sellerId        String?  // ID do vendedor
+  accountId       String?  // ID genérico da conta
+  
+  // Credentials (specific for this client-provider pair)
+  credentials     Json?    // Client-specific credentials
+  
+  // Configuration
+  settings        Json?    // Connection-specific settings
+  syncSettings    Json?    // Sync preferences (products, orders, stock)
+  
+  // Status
+  isActive        Boolean  @default(true)
+  isVerified      Boolean  @default(false)
+  
+  // Sync Status
+  lastSyncAt      DateTime?
+  lastSyncStatus  String?  // "SUCCESS", "FAILED", "PARTIAL"
+  lastSyncError   String?
+  syncFrequency   Int?     @default(3600) // seconds
+  
+  // Statistics
+  totalOrders     Int      @default(0)
+  totalProducts   Int      @default(0)
+  totalRevenue    Float    @default(0)
+  
+  // Timestamps
+  connectedAt     DateTime @default(now())
+  disconnectedAt  DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  // Relations
+  clientOrg       Organization @relation("ClientConnections", fields: [clientOrgId], references: [id], onDelete: Cascade)
+  providerOrg     Organization @relation("ProviderConnections", fields: [providerOrgId], references: [id], onDelete: Cascade)
+  
+  @@unique([clientOrgId, providerOrgId])
+  @@index([clientOrgId])
+  @@index([providerOrgId])
+  @@index([isActive])
+  @@map("client_provider_connections")
+}
+
+// ============================================
+// DATA SOURCE CONFIGURATIONS
+// ============================================
+
+model DataSourceConfig {
+  id              String   @id @default(uuid())
+  organizationId  String   @unique
+  
+  // Data Source Type
+  sourceType      DataSourceType @default(SQL_SERVER)
+  
+  // SQL Server Configuration
+  sqlHost         String?
+  sqlInstance     String?
+  sqlPort         Int?
+  sqlDatabase     String?
+  sqlUser         String?
+  sqlPassword     String?  // Encrypted
+  
+  // Connection Options
+  connectionTimeout Int?     @default(15000)  // milliseconds
+  requestTimeout    Int?     @default(30000)  // milliseconds
+  poolMax           Int?     @default(10)
+  poolMin           Int?     @default(0)
+  
+  // Table/View Mappings
+  productView     String?  // Ex: "u_csw_tips4y_Articles"
+  stockView       String?  // Ex: "u_csw_tips4y_ArticleWarehouse"
+  customerView    String?  // Ex: "u_csw_tips4y_Customers"
+  orderView       String?  // Ex: "u_csw_tips4y_Orders"
+  discountGroupView String?  // Ex: "u_csw_tips4y_ArticleDiscountGroup"
+  discountSubGroupView String?  // Ex: "u_csw_tips4y_ArticleDiscountSubGroup"
+  
+  // Field Mappings (how SQL fields map to our system)
+  fieldMappings   Json?    // Custom field mappings
+  
+  // Settings
+  settings        Json?    // Additional settings
+  isActive        Boolean  @default(true)
+  
+  // Test Connection
+  lastTestAt      DateTime?
+  lastTestStatus  String?  // "SUCCESS", "FAILED"
+  lastTestError   String?
+  
+  // Timestamps
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  // Relations
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  
+  @@index([organizationId])
+  @@index([isActive])
+  @@map("data_source_configs")
+}
+
+enum DataSourceType {
+  SQL_SERVER
+  MYSQL
+  POSTGRESQL
+  ORACLE
+  REST_API
+  GRAPHQL
+  FILE_STORAGE
+}
+
+// ============================================
+// BUSINESS MODULES
+// ============================================
+
+// Customer Management
+model Customer {
+  id          String   @id @default(uuid())
+  companyName String
+  taxId       String   @unique
+  email       String
+  phone       String?
+  address     String?
+  city        String?
+  country     String?
+  status      String   @default("active")
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime?
+
+  @@index([email])
+  @@index([taxId])
+  @@map("customers")
+}
+
+// Integrations
+model Integration {
+  id          String   @id @default(uuid())
+  name        String
+  type        String
+  config      Json
+  apiKey      String?
+  isActive    Boolean  @default(true)
+  lastSync    DateTime?
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([type])
+  @@index([isActive])
+  @@map("integrations")
+}
+
+// ============================================
+// SYNC ARTICLES - Staging para envio
+// ============================================
+
+model SyncArticle {
+  id          String   @id @default(uuid())
+  
+  // Relações
+  organizationId    String
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  providerConfigId  String
+  providerConfig    ProviderConfig @relation(fields: [providerConfigId], references: [id], onDelete: Cascade)
+  
+  // Identificação do artigo source
+  sourceArticleId   String?  // ID do artigo no sistema origem (SQL Server)
+  
+  // 17 campos do CSV TypsForYou
+  brandId                    String
+  articleDiscountGroupCode   String
+  partNumber                 String
+  discountSubGroupCode       String
+  internalPartNumber         String
+  categoryCode               String
+  attributeId                String?
+  active                     Boolean  @default(true)
+  availability               Boolean  @default(true)
+  service                    Boolean  @default(false)
+  sort                       Int      @default(0)
+  picture                    String?
+  articleName                String
+  articleDescription         String
+  daysAsNew                  Int      @default(0)
+  tag                        String?
+  reservedForFutureUse       String?
+  
+  // Status e controle
+  status          SyncStatus   @default(PENDING)
+  errorMessage    String?
+  errorDetails    Json?
+  attempts        Int          @default(0)
+  lastAttemptAt   DateTime?
+  sentAt          DateTime?
+  
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@index([organizationId])
+  @@index([providerConfigId])
+  @@index([status])
+  @@index([brandId])
+  @@index([partNumber])
+  @@map("sync_articles")
+}
+
+// ============================================
+// ENUMS
+// ============================================
+
+enum UserType {
+  ADMIN
+  DEV
+  USER
+  PARCERIA
+  CLIENTE
+  LICENCAS
+  TECNICO
+  AUDITORIA
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum OnlineStatus {
+  ONLINE
+  OFFLINE
+  AWAY
+}
+
+enum MFAMethod {
+  EMAIL
+  SMS
+  TOTP
+  BACKUP_CODES
+}
+
+enum OrganizationType {
+  MARKETPLACE
+  PROVIDER
+  PARTNER
+  CLIENT
+}
+
+enum OrganizationRole {
+  OWNER
+  ADMIN
+  MANAGER
+  MEMBER
+  VIEWER
+}
+
+enum LoginResult {
+  SUCCESS
+  FAILED
+  BLOCKED
+  MFA_REQUIRED
+}
+
+enum AuditAction {
+  CREATE
+  READ
+  UPDATE
+  DELETE
+  LOGIN
+  LOGOUT
+  PASSWORD_CHANGE
+  MFA_ENABLE
+  MFA_DISABLE
+  ACCOUNT_SUSPEND
+  ACCOUNT_ACTIVATE
+  PERMISSION_CHANGE
+}
+
+enum SyncStatus {
+  PENDING      // Aguardando envio
+  VALIDATED    // Validado e pronto para envio
+  SENT         // Enviado com sucesso
+  ERROR        // Erro no envio
+  REJECTED     // Rejeitado pela API (BrandID inválido, etc)
+  SKIPPED      // Pulado (falta campos obrigatórios)
+}
+
+// ============================================
+// CACHE DE ARTIGOS SINCRONIZADOS
+// ============================================
+
+model SyncedArticle {
+  id               String   @id @default(uuid())
+  organizationId   String
+  providerConfigId String
+  brandId          Int
+  partNumber       String
+  syncedAt         DateTime @default(now())
+  createdAt        DateTime @default(now())
+  
+  // Relations
+  organization     Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  providerConfig   ProviderConfig @relation(fields: [providerConfigId], references: [id], onDelete: Cascade)
+  
+  @@unique([organizationId, providerConfigId, brandId, partNumber], name: "synced_articles_unique")
+  @@index([organizationId, providerConfigId])
+  @@index([brandId, partNumber])
+  @@map("synced_articles")
+}
+
+// ============================================
+// SYNC JOBS - Batch Processing
+// ============================================
+
+model SyncJob {
+  id                    String   @id @default(uuid())
+  organizationId        String
+  providerConfigId      String
+  type                  SyncJobType
+  status                SyncJobStatus @default(PENDING)
+  
+  // Batch configuration
+  totalRecords          Int      @default(0)
+  processedRecords      Int      @default(0)
+  successRecords        Int      @default(0)
+  errorRecords          Int      @default(0)
+  batchSize             Int      @default(1000)
+  currentBatch          Int      @default(0)
+  
+  // Filters applied
+  filters               Json?
+  
+  // Progress tracking
+  progress              Float    @default(0) // 0 to 100
+  estimatedTimeRemaining Int?    // seconds
+  
+  // Error handling
+  errorMessage          String?
+  errorDetails          Json?
+  retryCount            Int      @default(0)
+  maxRetries            Int      @default(3)
+  
+  // Timestamps
+  startedAt             DateTime?
+  completedAt           DateTime?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+  
+  // Relations
+  organization          Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  providerConfig        ProviderConfig @relation(fields: [providerConfigId], references: [id], onDelete: Cascade)
+  errorLogs             SyncErrorLog[] // Relation to error logs
+  
+  @@index([organizationId])
+  @@index([providerConfigId])
+  @@index([status])
+  @@index([type])
+  @@index([createdAt])
+  @@map("sync_jobs")
+}
+
+enum SyncJobType {
+  ARTICLES
+  ARTICLE_WAREHOUSE
+  CUSTOMERS
+  CUSTOMER_DISCOUNT_GROUPS
+  CUSTOMER_WAREHOUSES
+  DISCOUNT_GROUPS
+  DISCOUNT_SUBGROUPS
+  ORDERS
+}
+
+enum SyncJobStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+// ============================================
+// SYNC ERROR LOGS
+// ============================================
+
+model SyncErrorLog {
+  id                String   @id @default(uuid())
+  organizationId    String
+  providerConfigId  String
+  syncJobId         String?
+  
+  // Error classification
+  operation         String   // e.g., 'ARTICLE_SYNC_CHUNK', 'API_UPLOAD', 'CSV_GENERATION'
+  entityType        String   // 'ARTICLE', 'ARTICLE_WAREHOUSE', 'CUSTOMER', etc.
+  
+  // Error details
+  errorMessage      String
+  errorStack        String?  @db.Text
+  errorCode         String?
+  
+  // Context (stores JSON with chunk info, data snapshot, API responses, etc.)
+  context           Json
+  
+  // Timestamps
+  createdAt         DateTime @default(now())
+  
+  // Relations
+  organization      Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  providerConfig    ProviderConfig @relation(fields: [providerConfigId], references: [id], onDelete: Cascade)
+  syncJob           SyncJob?       @relation(fields: [syncJobId], references: [id], onDelete: SetNull)
+  
+  @@index([organizationId])
+  @@index([providerConfigId])
+  @@index([syncJobId])
+  @@index([operation])
+  @@index([entityType])
+  @@index([createdAt])
+  @@map("sync_error_logs")
+}
