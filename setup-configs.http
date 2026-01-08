@@ -1,0 +1,143 @@
+### ============================================
+### SETUP COMPLETO - CSWMarkets Sync System
+### ============================================
+
+### Variables
+@baseUrl = http://localhost:4000/api/v1
+@token = YOUR_ACCESS_TOKEN_HERE
+@organizationId = 5f593aed-7849-4a9f-97c9-ee3d25efdc8f
+
+### ============================================
+### STEP 1: Create/Update ProviderConfig (TypsForYou API)
+### ============================================
+### Este é o único ProviderConfig necessário (1:1 com organization)
+### Usa PUT - cria se não existir, atualiza se já existir
+### DADOS DO BACKUP ORIGINAL
+PUT {{baseUrl}}/provider-configs/organization/{{organizationId}}
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "apiUrl": "https://tips4ycloud.azure-api.net/supplierManagement/api",
+  "authType": "API_KEY",
+  "apiKey": "790f97dce3b090fb348d4dfb2abc3b5e:529e7beaf24819f774334fcf1e3867be:7f5c76d16f9f2a1881c131ef505802",
+  "apiSecret": "48db77d9155741da9ddfafbe8db857e0:cea4183a25f2fb161204372d63f4dd76:c6f34a3701c60fa3d1a666026401a532",
+  "webhookUrl": "https://csw-markets.pt/webhooks/typs4you",
+  "webhookSecret": "7992c3b410194ba8f4202eb501d46f89:5a979db3d74ea34d98dde42bc6a828cd:be35501d791d972836c8ad2c0d89343aa013c9a6c8cb5b917d3fdce80f0ff922",
+  "webhookEvents": ["order.created", "product.updated", "stock.changed"],
+  "rateLimit": 100,
+  "rateLimitWindow": 60,
+  "maxRetries": 3,
+  "retryDelay": 1000,
+  "fieldMappings": {
+    "product_id": "sku",
+    "product_name": "title",
+    "product_price": "price",
+    "product_stock": "quantity"
+  },
+  "settings": {
+    "autoSync": true,
+    "syncInterval": 1800,
+    "categories": ["personalizados", "presentes", "customizados"]
+  },
+  "isActive": true
+}
+
+### ⚠️ IMPORTANTE: Guarda o 'id' da resposta como @providerConfigId
+
+### ============================================
+### STEP 2: Create/Update DataSourceConfig (SQL Server)
+### ============================================
+### Este é o único DataSourceConfig necessário (1:1 com organization)
+### Usa PUT - cria se não existir, atualiza se já existir
+### DADOS DO BACKUP ORIGINAL
+PUT {{baseUrl}}/data-source-configs/organization/{{organizationId}}
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "sourceType": "SQL_SERVER",
+  "sqlHost": "SRVCLOUDSP",
+  "sqlInstance": "PHC",
+  "sqlPort": 1433,
+  "sqlDatabase": "samiparts",
+  "sqlUser": "sa",
+  "sqlPassword": "72bae6c24b7d82af9069da43ab26c6d8:3b06c3475807e5046cd584a6c7584dab:0008c9a0c281a43ef92a",
+  "connectionTimeout": 15000,
+  "requestTimeout": 30000,
+  "poolMax": 10,
+  "poolMin": 0,
+  "productView": "u_csw_tips4y_Articles",
+  "stockView": "u_csw_tips4y_ArticleWarehouse",
+  "customerView": "u_csw_tips4y_Customers",
+  "discountGroupView": "u_csw_tips4y_ArticleDiscountGroup",
+  "discountSubGroupView": "u_csw_tips4y_ArticleDiscountSubGroup",
+  "isActive": true
+}
+
+### ============================================
+### STEP 3: Create Sync Configurations (Crons)
+### ============================================
+### Usa o @providerConfigId obtido no STEP 1
+
+### 3.1 - Discount Groups Sync (every 1 minute)
+POST {{baseUrl}}/sync-config
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "organizationId": "{{organizationId}}",
+  "providerConfigId": "PROVIDER_CONFIG_ID_FROM_STEP_1",
+  "syncType": "DISCOUNT_GROUPS",
+  "intervalSeconds": 60,
+  "enabled": true
+}
+
+### 3.2 - Discount SubGroups Sync (every 5 minutes)
+POST {{baseUrl}}/sync-config
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "organizationId": "{{organizationId}}",
+  "providerConfigId": "PROVIDER_CONFIG_ID_FROM_STEP_1",
+  "syncType": "DISCOUNT_SUBGROUPS",
+  "intervalSeconds": 300,
+  "enabled": true
+}
+
+### 3.3 - Article Warehouse Sync (every 10 minutes)
+POST {{baseUrl}}/sync-config
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "organizationId": "{{organizationId}}",
+  "providerConfigId": "PROVIDER_CONFIG_ID_FROM_STEP_1",
+  "syncType": "ARTICLE_WAREHOUSE",
+  "intervalSeconds": 600,
+  "enabled": true,
+  "options": {
+    "warehouseCode": "1"
+  }
+}
+
+### ============================================
+### VERIFICATION - Check what was created
+### ============================================
+
+### Get ProviderConfig
+GET {{baseUrl}}/provider-configs/organization/{{organizationId}}
+Authorization: Bearer {{token}}
+
+### Get DataSourceConfig
+GET {{baseUrl}}/data-source-configs/organization/{{organizationId}}
+Authorization: Bearer {{token}}
+
+### Get all Sync Configs
+GET {{baseUrl}}/sync-config/{{organizationId}}
+Authorization: Bearer {{token}}
+
+### Get Sync Status
+GET {{baseUrl}}/sync-config/{{organizationId}}/status
+Authorization: Bearer {{token}}

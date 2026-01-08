@@ -29,6 +29,7 @@ const envSchema = z.object({
   SMTP_USER: z.string().email(),
   SMTP_PASSWORD: z.string(),
   EMAIL_FROM: z.string().email(),
+  ORDER_NOTIFICATION_EMAILS: z.string().optional(),
 
   // CORS
   CORS_ORIGIN: z.string(),
@@ -93,6 +94,7 @@ export const config = {
       pass: env.SMTP_PASSWORD,
     },
     from: env.EMAIL_FROM,
+    orderNotificationEmails: env.ORDER_NOTIFICATION_EMAILS?.split(',').map(e => e.trim()) || [],
   },
   cors: {
     origin: env.CORS_ORIGIN.split(','),

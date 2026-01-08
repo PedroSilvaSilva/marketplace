@@ -1,6 +1,6 @@
 ﻿import { Request, Response } from 'express';
 import { OrganizationService } from './organization.service';
-import { createOrganizationSchema, updateOrganizationSchema, inviteMemberSchema, updateMemberRoleSchema } from './organization.validation';
+import { createOrganizationSchema, updateOrganizationSchema, inviteMemberSchema, updateMemberRoleSchema, updateMemberStatusSchema } from './organization.validation';
 import { asyncHandler } from '@utils/response';
 
 export class OrganizationController {
@@ -91,5 +91,13 @@ export class OrganizationController {
     const userId = req.user?.id!;
     const result = await this.service.leaveOrganization(id, userId);
     res.json({ success: true, data: result, meta: { timestamp: new Date().toISOString() } });
+  });
+
+  updateMemberStatus = asyncHandler(async (req: Request, res: Response) => {
+    const { id, memberId } = req.params;
+    const { isActive } = updateMemberStatusSchema.parse(req.body);
+    const userId = req.user?.id!;
+    const member = await this.service.updateMemberStatus(id, memberId, isActive, userId);
+    res.json({ success: true, data: member, meta: { timestamp: new Date().toISOString(), message: `Member ${isActive ? 'activated' : 'deactivated'} successfully` } });
   });
 }

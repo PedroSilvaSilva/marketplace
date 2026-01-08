@@ -1352,7 +1352,7 @@ export class Typs4YouClient {
       });
 
       logger.info('Orders fetched successfully', {
-        count: Array.isArray(response.data?.Table) ? response.data.Table.length : 'unknown'
+        count: Array.isArray(response.data?.Orders_Table) ? response.data.Orders_Table.length : 'unknown'
       });
 
       return response.data;
@@ -1367,7 +1367,7 @@ export class Typs4YouClient {
           StartTime: axiosError.response.data.StartTime,
           EndTime: axiosError.response.data.EndTime,
           Duration: axiosError.response.data.Duration,
-          Table: [],
+          Orders_Table: [],
           ExitCode: '200',
           ExitMesssage: 'No records found'
         };
@@ -1381,6 +1381,40 @@ export class Typs4YouClient {
       });
       
       throw new AppError(`Failed to fetch orders: ${message}`, axiosError.response?.status || 500);
+    }
+  }
+
+  /**
+   * Upload file to TypsForYou API
+   * Used for CSV uploads (orders, articles, etc)
+   */
+  static async uploadFile(
+    endpoint: string,
+    subscriptionKey: string,
+    token: string,
+    formData: any
+  ): Promise<any> {
+    try {
+      logger.info(`[Typs4YouClient] Uploading file to ${endpoint}`);
+
+      const response = await axios.post(
+        `https://tips4ycloud.azure-api.net/supplierManagement/api${endpoint}`,
+        formData,
+        {
+          headers: {
+            'Token': token,
+            'Ocp-Apim-Subscription-Key': subscriptionKey,
+            ...formData.getHeaders()
+          },
+          timeout: 60000
+        }
+      );
+
+      logger.info('[Typs4YouClient] Upload successful');
+      return response.data;
+    } catch (error: any) {
+      logger.error('[Typs4YouClient] Upload failed:', error.response?.data || error.message);
+      throw error;
     }
   }
 }

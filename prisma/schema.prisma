@@ -258,6 +258,9 @@ model Organization {
   syncedArticles       SyncedArticle[]
   syncJobs             SyncJob[]
   syncErrorLogs        SyncErrorLog[]
+  syncConfigurations   SyncConfiguration[]
+  syncExecutionLogs    SyncExecutionLog[]
+  articleWarehouseCache ArticleWarehouseSyncCache[]
   
   @@index([slug])
   @@index([type])
@@ -352,6 +355,8 @@ model ProviderConfig {
   syncedArticles  SyncedArticle[]
   syncJobs        SyncJob[]
   syncErrorLogs   SyncErrorLog[]
+  syncConfigurations SyncConfiguration[]
+  syncExecutionLogs  SyncExecutionLog[]
   
   @@index([organizationId])
   @@index([isActive])
@@ -788,4 +793,139 @@ model SyncErrorLog {
   @@index([entityType])
   @@index([createdAt])
   @@map("sync_error_logs")
+}
+// ============================================
+// SYNC CONFIGURATION (CRON/SCHEDULED SYNCS)
+// ============================================
+
+model SyncConfiguration {
+  id                String   @id @default(uuid())
+  organizationId    String
+  providerConfigId  String
+  
+  // Sync type (what to sync)
+  syncType          SyncType
+  
+  // Schedule configuration
+  enabled           Boolean  @default(true)
+  intervalSeconds   Int      @default(300) // Default: 5 minutes
+  
+  // Tracking
+  lastSyncAt        DateTime?
+  lastSuccessAt     DateTime?
+  lastErrorAt       DateTime?
+  lastError         String?
+  
+  // Options (JSON with sync-specific settings)
+  options           Json?    @default("{}")
+  
+  // Timestamps
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  // Relations
+  organization      Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  providerConfig    ProviderConfig @relation(fields: [providerConfigId], references: [id], onDelete: Cascade)
+  
+  @@unique([organizationId, providerConfigId, syncType])
+  @@index([organizationId])
+  @@index([providerConfigId])
+  @@index([enabled])
+  @@index([lastSyncAt])
+  @@map("sync_configurations")
+}
+
+enum SyncType {
+  DISCOUNT_GROUPS
+  DISCOUNT_SUBGROUPS
+  ARTICLES
+  ARTICLE_WAREHOUSE
+  CUSTOMERS
+  CUSTOMER_DISCOUNT_GROUPS
+  CUSTOMER_WAREHOUSES
+  ORDERS              // Send integrated orders TO TypsForYou
+  ORDER_FETCH         // Fetch orders FROM TypsForYou and process
+}
+
+// ============================================
+// SYNC EXECUTION LOGS
+// ============================================
+
+model SyncExecutionLog {
+  id                    String   @id @default(uuid())
+  
+  // Reference
+  syncConfigurationId   String?
+  organizationId        String
+  providerConfigId      String
+  syncType              SyncType
+  
+  // Execution details
+  status                SyncExecutionStatus
+  startedAt             DateTime @default(now())
+  completedAt           DateTime?
+  duration              Int?     // Duration in milliseconds
+  
+  // Results
+  totalFetched          Int?     @default(0)
+  totalProcessed        Int?     @default(0)
+  totalSucceeded        Int?     @default(0)
+  totalFailed           Int?     @default(0)
+  totalSkipped          Int?     @default(0)
+  
+  // Error details
+  errorMessage          String?
+  errorStack            String?
+  
+  // Additional metadata
+  metadata              Json?    @default("{}")
+  
+  // Relations
+  organization          Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  providerConfig        ProviderConfig @relation(fields: [providerConfigId], references: [id], onDelete: Cascade)
+  
+  @@index([syncConfigurationId])
+  @@index([organizationId])
+  @@index([providerConfigId])
+  @@index([syncType])
+  @@index([status])
+  @@index([startedAt])
+  @@index([completedAt])
+  @@map("sync_execution_logs")
+}
+
+// ============================================
+// ARTICLE WAREHOUSE SYNC CACHE
+// ============================================
+
+model ArticleWarehouseSyncCache {
+  id              String   @id @default(uuid())
+  organizationId  String
+  
+  // Article identification
+  brandId         String
+  partNumber      String
+  warehouseCode   String
+  
+  // Data hash for change detection (MD5 of all fields)
+  dataHash        String
+  
+  // Tracking
+  lastSyncedAt    DateTime @default(now())
+  createdAt       DateTime @default(now())
+  
+  // Relations
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  
+  @@unique([organizationId, brandId, partNumber, warehouseCode])
+  @@index([organizationId])
+  @@index([lastSyncedAt])
+  @@map("article_warehouse_sync_cache")
+}
+
+enum SyncExecutionStatus {
+  RUNNING
+  SUCCESS
+  FAILED
+  PARTIAL // Some items succeeded, some failed
 }

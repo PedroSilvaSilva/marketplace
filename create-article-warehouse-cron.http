@@ -1,0 +1,34 @@
+### Create Article Warehouse Cron Job
+POST http://localhost:4000/api/v1/sync-config
+Content-Type: application/json
+
+{
+  "organizationId": "b41e3222-7b2b-4a63-967d-c1eebe05612a",
+  "providerConfigId": "73b29d9b-054a-448f-b7c5-c0f3cac2b7fa",
+  "syncType": "ARTICLE_WAREHOUSE",
+  "enabled": true,
+  "intervalSeconds": 600,
+  "options": {
+    "warehouseCode": "1"
+  }
+}
+
+### Check all crons for organization
+GET http://localhost:4000/api/v1/sync-config/b41e3222-7b2b-4a63-967d-c1eebe05612a
+
+### Toggle cron active status (replace {id})
+PATCH http://localhost:4000/api/v1/sync-config/{id}/toggle
+
+### Update interval (replace {id})
+PATCH http://localhost:4000/api/v1/sync-config/{id}/interval
+Content-Type: application/json
+
+{
+  "intervalSeconds": 600
+}
+
+### Trigger manual sync (replace {id})
+POST http://localhost:4000/api/v1/sync-config/{id}/trigger
+
+### View execution logs (replace {id})
+GET http://localhost:4000/api/v1/sync-config/{id}/logs

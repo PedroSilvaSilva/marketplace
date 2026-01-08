@@ -559,4 +559,70 @@ export class OrganizationService {
 
     return { message: 'Left organization successfully' };
   }
+
+  /**
+   * Update member status (activate/deactivate)
+   */
+  async updateMemberStatus(organizationId: string, memberId: string, isActive: boolean, updaterId: string) {
+    const organization = await this.getById(organizationId, updaterId);
+
+    // Check if updater has permission (OWNER or ADMIN)
+    const updater = organization.members.find((m) => m.userId === updaterId);
+    if (!updater || !['OWNER', 'ADMIN'].includes(updater.role)) {
+      throw new ForbiddenError('Only owners and admins can change member status');
+    }
+
+    const member = organization.members.find((m) => m.id === memberId);
+    if (!member) {
+      throw new NotFoundError('Member not found');
+    }
+
+    // Cannot change own status
+    if (member.userId === updaterId) {
+      throw new ForbiddenError('Cannot change your own status');
+    }
+
+    // Cannot deactivate the last active owner
+    if (!isActive && member.role === 'OWNER') {
+      const activeOwners = organization.members.filter((m) => m.role === 'OWNER' && m.isActive).length;
+      if (activeOwners <= 1) {
+        throw new ForbiddenError('Cannot deactivate the last active owner');
+      }
+    }
+
+    const updated = await prisma.organizationMember.update({
+      where: { id: memberId },
+      data: { isActive },
+      include: {
+        user: {
+          select: {
+            id: true,
+            email: true,
+            profile: {
+              select: {
+                firstName: true,
+                lastName: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    // Audit log
+    await prisma.auditLog.create({
+      data: {
+        userId: updaterId,
+        action: 'UPDATE',
+        entity: 'OrganizationMember',
+        entityId: memberId,
+        description: `Member ${isActive ? 'activated' : 'deactivated'} in ${organization.name}`,
+        changes: { isActive } as any,
+      },
+    });
+
+    logger.info(`Member ${memberId} ${isActive ? 'activated' : 'deactivated'} in organization ${organizationId} by user ${updaterId}`);
+
+    return updated;
+  }
 }

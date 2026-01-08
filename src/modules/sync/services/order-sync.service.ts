@@ -32,18 +32,24 @@ export class OrderSyncService {
       }
 
       // Fetch orders from TypsForYou API
-      const orders = await client.getOrders(filters);
+      const response = await client.getOrders(filters);
+      
+      // Extract orders from response.Orders_Table (TypsForYou format)
+      const ordersData = response as { Orders_Table?: any[] };
+      const orders = ordersData.Orders_Table || [];
 
       logger.info('Successfully fetched orders from TypsForYou', {
         organizationId,
         providerConfigId,
-        ordersCount: Array.isArray(orders) ? orders.length : 1
+        ordersCount: orders.length
       });
 
       return {
         success: true,
-        orders,
-        count: Array.isArray(orders) ? orders.length : 1
+        orders: {
+          Orders_Table: orders  // Format expected by processOrders
+        },
+        count: orders.length
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';

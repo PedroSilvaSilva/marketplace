@@ -21,6 +21,9 @@ import clientProviderRoutes from '@modules/client-provider/client-provider.route
 import dataSourceConfigRoutes from '@modules/data-source-config/data-source-config.routes';
 import syncRoutes from '@modules/sync/sync.routes';
 import sqlDataRoutes from '@modules/sync/sql-data.routes';
+import syncConfigRoutes from '@modules/sync/sync-config.routes';
+import syncLogsRoutes from '@modules/sync/routes/sync-logs.routes';
+import integrationStatsRoutes from '@modules/integration/integration-stats.routes';
 
 class App {
   public app: Application;
@@ -131,6 +134,9 @@ class App {
     this.app.use(`${apiPrefix}/data-source-configs`, dataSourceConfigRoutes);
     this.app.use(`${apiPrefix}/sync`, syncRoutes);
     this.app.use(`${apiPrefix}/sync/sql`, sqlDataRoutes);
+    this.app.use(`${apiPrefix}/sync-config`, syncConfigRoutes);
+    this.app.use(`${apiPrefix}/sync-logs`, syncLogsRoutes);
+    this.app.use(`${apiPrefix}/integration/stats`, integrationStatsRoutes);
 
     logger.info('✅ Routes initialized successfully');
   }

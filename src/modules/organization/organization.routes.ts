@@ -377,6 +377,55 @@ router.put(
 
 /**
  * @swagger
+ * /organizations/{id}/members/{memberId}/status:
+ *   patch:
+ *     summary: Activate or deactivate member
+ *     tags: [Organizations]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Organization ID
+ *       - in: path
+ *         name: memberId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Member ID
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - isActive
+ *             properties:
+ *               isActive:
+ *                 type: boolean
+ *                 example: false
+ *     responses:
+ *       200:
+ *         description: Member status updated successfully
+ *       401:
+ *         description: Unauthorized
+ *       403:
+ *         description: Forbidden - OWNER or ADMIN role required
+ *       404:
+ *         description: Organization or member not found
+ */
+router.patch(
+  '/:id/members/:memberId/status',
+  authenticate,
+  controller.updateMemberStatus
+);
+
+/**
+ * @swagger
  * /organizations/{id}/members/{memberId}:
  *   delete:
  *     summary: Remove member from organization

@@ -100,7 +100,25 @@ export class OrderProcessingService {
   }
 
   /**
+   * Check if order already exists in DataDrive_CAB by NumExterno (OrderID)
+   */
+  private static async orderExists(
+    organizationId: string,
+    orderID: string
+  ): Promise<boolean> {
+    const query = `
+      SELECT TOP 1 NumExterno
+      FROM [samiparts].[dbo].[DataDrive_CAB]
+      WHERE NumExterno = '${orderID}'
+    `;
+
+    const result = await SQLService.query(organizationId, query);
+    return result.length > 0;
+  }
+
+  /**
    * Insert order header into DataDrive_CAB
+   * Validates that NumExterno (OrderID) is unique before inserting
    */
   private static async insertOrderHeader(
     organizationId: string,
@@ -109,6 +127,15 @@ export class OrderProcessingService {
     data: string,
     hora: string
   ): Promise<void> {
+    // Validate that order doesn't already exist
+    const exists = await this.orderExists(organizationId, order.OrderID);
+    if (exists) {
+      throw new AppError(
+        `Order with NumExterno '${order.OrderID}' already exists in database`,
+        409 // Conflict
+      );
+    }
+
     const query = `
       INSERT INTO [samiparts].[dbo].[DataDrive_CAB] (
         [stampCab],
@@ -194,8 +221,8 @@ export class OrderProcessingService {
         '${stampCab}',
         '${detail.BrandId}',
         '${(detail.Name || '').replace(/'/g, "''")}',
-        '${detail.InternalPartNumber || detail.PartNumber}',
         '${detail.PartNumber}',
+        '${detail.InternalPartNumber || detail.PartNumber}',
         ${detail.ArticleQuantity},
         ${detail.ArticlePrice},
         '${data}',
@@ -208,19 +235,28 @@ export class OrderProcessingService {
 
   /**
    * Process and insert a single order into SQL Server
+   * Optionally notifies TypsForYou about integration if credentials provided
    */
   static async processOrder(
     organizationId: string,
-    order: TypsForYouOrder
+    order: TypsForYouOrder,
+    options?: {
+      notifyTypsForYou?: boolean;
+      subscriptionKey?: string;
+      token?: string;
+    }
   ): Promise<{
     success: boolean;
     stampCab: string;
     linesInserted: number;
+    notified?: boolean;
+    notificationError?: string;
   }> {
     logger.info('Processing order', {
       orderId: order.OrderID,
       uniqueOrderId: order.UniqueOrderID,
-      detailsCount: order.Details.length
+      detailsCount: order.Details.length,
+      willNotifyTypsForYou: options?.notifyTypsForYou || false
     });
 
     try {
@@ -238,6 +274,15 @@ export class OrderProcessingService {
       let linesInserted = 0;
       for (let i = 0; i < order.Details.length; i++) {
         const detail = order.Details[i];
+        
+        if (!detail) {
+          logger.warn('Skipping undefined order detail', { 
+            orderId: order.OrderID, 
+            lineIndex: i 
+          });
+          continue;
+        }
+
         const stampLin = this.generateStampLin(stampCab, i);
 
         await this.insertOrderLine(
@@ -252,17 +297,55 @@ export class OrderProcessingService {
         linesInserted++;
       }
 
-      logger.info('Order processed successfully', {
+      logger.info('Order processed successfully in SQL Server', {
         stampCab,
         orderId: order.OrderID,
         linesInserted
       });
 
-      return {
+      const result: {
+        success: boolean;
+        stampCab: string;
+        linesInserted: number;
+        notified?: boolean;
+        notificationError?: string;
+      } = {
         success: true,
         stampCab,
         linesInserted
       };
+
+      // Notify TypsForYou if credentials provided
+      if (options?.notifyTypsForYou && options?.subscriptionKey && options?.token) {
+        try {
+          const { OrderIntegrationService } = await import('./order-integration.service');
+          
+          await OrderIntegrationService.notifySingleOrder(
+            organizationId,
+            order.OrderID,
+            options.subscriptionKey,
+            options.token,
+            order.Comment || undefined
+          );
+
+          logger.info('TypsForYou notified about order integration', {
+            orderId: order.OrderID
+          });
+
+          result.notified = true;
+        } catch (notifyError) {
+          const errorMsg = notifyError instanceof Error ? notifyError.message : String(notifyError);
+          logger.warn('Failed to notify TypsForYou (order still inserted in SQL)', {
+            orderId: order.OrderID,
+            error: errorMsg
+          });
+          
+          result.notified = false;
+          result.notificationError = errorMsg;
+        }
+      }
+
+      return result;
     } catch (error) {
       logger.error('Failed to process order', {
         orderId: order.OrderID,
@@ -274,36 +357,107 @@ export class OrderProcessingService {
 
   /**
    * Process multiple orders from TypsForYou response
+   * Optionally notifies TypsForYou about each successful integration
    */
   static async processOrders(
     organizationId: string,
-    ordersResponse: OrdersResponse
+    ordersResponse: OrdersResponse,
+    options?: {
+      notifyTypsForYou?: boolean;
+      subscriptionKey?: string;
+      token?: string;
+    }
   ): Promise<{
     success: boolean;
     ordersProcessed: number;
+    ordersSkipped: number;
+    ordersNotified: number;
     totalLines: number;
-    errors: Array<{ orderId: string; error: string }>;
+    errors: Array<{ orderId: string; error: string; type: 'duplicate' | 'error' }>;
+    notificationErrors: Array<{ orderId: string; error: string }>;
   }> {
     const orders = ordersResponse.Orders_Table;
-    logger.info('Processing orders batch', { ordersCount: orders.length });
+    logger.info('Processing orders batch', { 
+      ordersCount: orders.length,
+      willNotifyTypsForYou: options?.notifyTypsForYou || false
+    });
 
     let ordersProcessed = 0;
+    let ordersSkipped = 0;
+    let ordersNotified = 0;
     let totalLines = 0;
-    const errors: Array<{ orderId: string; error: string }> = [];
+    const errors: Array<{ orderId: string; error: string; type: 'duplicate' | 'error' }> = [];
+    const notificationErrors: Array<{ orderId: string; error: string }> = [];
 
     for (const order of orders) {
       try {
-        const result = await this.processOrder(organizationId, order);
+        const result = await this.processOrder(organizationId, order, options);
         ordersProcessed++;
         totalLines += result.linesInserted;
+        
+        // Track notification status
+        if (result.notified) {
+          ordersNotified++;
+        } else if (result.notificationError) {
+          notificationErrors.push({
+            orderId: order.OrderID,
+            error: result.notificationError
+          });
+        }
       } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        const isDuplicate = error instanceof AppError && error.statusCode === 409;
+        
+        if (isDuplicate) {
+          ordersSkipped++;
+          logger.warn('Order already exists (skipped from SQL insertion)', {
+            orderId: order.OrderID,
+            error: errorMessage
+          });
+
+          // Even if duplicate in SQL, still notify TypsForYou if credentials provided
+          // This handles orders inserted before notification logic was implemented
+          if (options?.notifyTypsForYou && options?.subscriptionKey && options?.token) {
+            try {
+              const { OrderIntegrationService } = await import('./order-integration.service');
+              
+              await OrderIntegrationService.notifySingleOrder(
+                organizationId,
+                order.OrderID,
+                options.subscriptionKey,
+                options.token,
+                order.Comment || undefined
+              );
+
+              logger.info('TypsForYou notified about existing order', {
+                orderId: order.OrderID
+              });
+
+              ordersNotified++;
+            } catch (notifyError) {
+              const notifyErrorMsg = notifyError instanceof Error ? notifyError.message : String(notifyError);
+              logger.warn('Failed to notify TypsForYou about existing order', {
+                orderId: order.OrderID,
+                error: notifyErrorMsg
+              });
+              
+              notificationErrors.push({
+                orderId: order.OrderID,
+                error: notifyErrorMsg
+              });
+            }
+          }
+        } else {
+          logger.error('Failed to process order', {
+            orderId: order.OrderID,
+            error
+          });
+        }
+
         errors.push({
           orderId: order.OrderID,
-          error: error instanceof Error ? error.message : String(error)
-        });
-        logger.error('Failed to process order', {
-          orderId: order.OrderID,
-          error
+          error: errorMessage,
+          type: isDuplicate ? 'duplicate' : 'error'
         });
       }
     }
@@ -311,15 +465,21 @@ export class OrderProcessingService {
     logger.info('Orders batch processing completed', {
       total: orders.length,
       processed: ordersProcessed,
+      skipped: ordersSkipped,
+      notified: ordersNotified,
       totalLines,
-      errors: errors.length
+      errors: errors.length,
+      notificationErrors: notificationErrors.length
     });
 
     return {
-      success: errors.length === 0,
+      success: errors.filter(e => e.type === 'error').length === 0,
       ordersProcessed,
+      ordersSkipped,
+      ordersNotified,
       totalLines,
-      errors
+      errors,
+      notificationErrors
     };
   }
 }

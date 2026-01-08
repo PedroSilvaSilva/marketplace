@@ -1,0 +1,32 @@
+### Create Discount Sub-Groups Cron Job
+POST http://localhost:4000/api/v1/sync-config
+Content-Type: application/json
+
+{
+  "organizationId": "b41e3222-7b2b-4a63-967d-c1eebe05612a",
+  "providerConfigId": "73b29d9b-054a-448f-b7c5-c0f3cac2b7fa",
+  "syncType": "DISCOUNT_SUBGROUPS",
+  "enabled": true,
+  "intervalSeconds": 300,
+  "options": {}
+}
+
+### Check if cron exists (list all for organization)
+GET http://localhost:4000/api/v1/sync-config/b41e3222-7b2b-4a63-967d-c1eebe05612a
+
+### Toggle cron active status
+PATCH http://localhost:4000/api/v1/sync-config/{id}/toggle
+
+### Update interval (if needed)
+PATCH http://localhost:4000/api/v1/sync-config/{id}/interval
+Content-Type: application/json
+
+{
+  "interval": 300
+}
+
+### Trigger manual sync
+POST http://localhost:4000/api/v1/sync-config/{id}/trigger
+
+### View execution logs
+GET http://localhost:4000/api/v1/sync-config/{id}/logs

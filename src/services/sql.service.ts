@@ -548,6 +548,7 @@ export class SQLService {
       page?: number;
       limit?: number;
       search?: string;
+      changedSince?: Date; // Filter by DataCriacao or DataAlteracao
     }
   ) {
     const config = await prisma.dataSourceConfig.findUnique({
@@ -568,17 +569,29 @@ export class SQLService {
         ArticleDiscountGroupCode,
         DiscountGroupName,
         Tag,
-        ReservedForFutureUse
+        ReservedForFutureUse,
+        DataCriacao,
+        DataAlteracao
       FROM ${config.discountGroupView}
     `;
 
+    // Build WHERE conditions
+    const conditions: string[] = [];
+
+    // Filter by changedSince (incremental sync)
+    if (options?.changedSince) {
+      const dateStr = options.changedSince.toISOString().slice(0, 19).replace('T', ' ');
+      conditions.push(`(DataCriacao > '${dateStr}' OR DataAlteracao > '${dateStr}')`);
+    }
+
     // Add search filter if provided
     if (options?.search) {
-      query += `
-        WHERE 
-          ArticleDiscountGroupCode LIKE '%${options.search}%' 
-          OR DiscountGroupName LIKE '%${options.search}%'
-      `;
+      conditions.push(`(ArticleDiscountGroupCode LIKE '%${options.search}%' OR DiscountGroupName LIKE '%${options.search}%')`);
+    }
+
+    // Add WHERE clause if conditions exist
+    if (conditions.length > 0) {
+      query += ` WHERE ${conditions.join(' AND ')}`;
     }
 
     // Add pagination
@@ -590,12 +603,8 @@ export class SQLService {
 
     // Get total count
     let countQuery = `SELECT COUNT(*) as total FROM ${config.discountGroupView}`;
-    if (options?.search) {
-      countQuery += `
-        WHERE 
-          ArticleDiscountGroupCode LIKE '%${options.search}%' 
-          OR DiscountGroupName LIKE '%${options.search}%'
-      `;
+    if (conditions.length > 0) {
+      countQuery += ` WHERE ${conditions.join(' AND ')}`;
     }
 
     const [data, countResult] = await Promise.all([
@@ -628,6 +637,7 @@ export class SQLService {
       limit?: number;
       search?: string;
       groupCode?: string;
+      changedSince?: Date; // Filter by DataCriacao or DataAlteracao
     }
   ) {
     const config = await prisma.dataSourceConfig.findUnique({
@@ -648,7 +658,9 @@ export class SQLService {
         LTRIM(RTRIM(ArticleDiscountGroupCode)) as ArticleDiscountGroupCode,
         LTRIM(RTRIM(DiscountSubGroupCode)) as DiscountSubGroupCode,
         LTRIM(RTRIM(DiscountSubGroupName)) as DiscountSubGroupName,
-        LTRIM(RTRIM(ISNULL(Tag, ''))) as Tag
+        LTRIM(RTRIM(ISNULL(Tag, ''))) as Tag,
+        DataCriacao,
+        DataAlteracao
       FROM ${config.discountSubGroupView}
     `;
 
@@ -657,6 +669,12 @@ export class SQLService {
     
     // CRITICAL: Exclude records with empty DiscountSubGroupCode (required by TypsForYou)
     conditions.push(`DiscountSubGroupCode IS NOT NULL AND LTRIM(RTRIM(DiscountSubGroupCode)) <> ''`);
+    
+    // Filter by changedSince (incremental sync)
+    if (options?.changedSince) {
+      const dateStr = options.changedSince.toISOString().slice(0, 19).replace('T', ' ');
+      conditions.push(`(DataCriacao > '${dateStr}' OR DataAlteracao > '${dateStr}')`);
+    }
     
     if (options?.groupCode) {
       conditions.push(`ArticleDiscountGroupCode = '${options.groupCode}'`);

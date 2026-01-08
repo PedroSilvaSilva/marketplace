@@ -12,6 +12,7 @@
       "@config/*": ["./config/*"],
       "@middlewares/*": ["./middlewares/*"],
       "@modules/*": ["./modules/*"],
+      "@services/*": ["./services/*"],
       "@utils/*": ["./utils/*"],
       "@types/*": ["./types/*"]
     },

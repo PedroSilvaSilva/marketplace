@@ -14,9 +14,11 @@ import { CustomerDiscountGroupSyncService } from './services/customer-discount-g
 import { CustomerWarehouseSyncService } from './services/customer-warehouse-sync.service';
 import { OrderSyncService } from './services/order-sync.service';
 import { OrderProcessingService } from './services/order-processing.service';
+import { OrderIntegrationService } from './services/order-integration.service';
 import { BatchSyncService } from './services/batch-sync.service';
 import { ErrorLogger } from './services/error-logger.service';
 import { SQLService } from '../../services/sql.service';
+import { CryptoService } from '@utils/crypto';
 import logger from '@config/logger';
 import prisma from '@config/database';
 import { SyncJobType, SyncJobStatus } from '@prisma/client';
@@ -666,8 +668,8 @@ router.post('/staging/:organizationId/:providerConfigId/send', asyncHandler(asyn
  * @swagger
  * /sync/discount-groups/{organizationId}/{providerConfigId}/csv:
  *   get:
- *     summary: Generate CSV for discount groups
- *     description: Generates CSV file from SQL Server discount groups view
+ *     summary: Generate CSV for discount groups and automatically send to TypsForYou
+ *     description: Generates CSV file from SQL Server discount groups view and automatically sends to TypsForYou
  *     tags: [Sync]
  *     security:
  *       - bearerAuth: []
@@ -696,20 +698,21 @@ router.post('/staging/:organizationId/:providerConfigId/send', asyncHandler(asyn
  *         description: Search term
  *     responses:
  *       200:
- *         description: CSV file generated
+ *         description: CSV file generated and sent to TypsForYou
  *         content:
  *           text/csv:
  *             schema:
  *               type: string
  */
 router.get('/discount-groups/:organizationId/:providerConfigId/csv', asyncHandler(async (req: Request, res: Response) => {
-  const { organizationId } = req.params;
+  const { organizationId, providerConfigId } = req.params;
   const { limit, search } = req.query;
 
-  if (!organizationId) {
-    throw new AppError('Organization ID is required', 400);
+  if (!organizationId || !providerConfigId) {
+    throw new AppError('Organization ID and Provider Config ID are required', 400);
   }
 
+  // 1. Generate CSV
   const result = await DiscountGroupSyncService.generateDiscountGroupsCsv(
     organizationId,
     {
@@ -718,9 +721,29 @@ router.get('/discount-groups/:organizationId/:providerConfigId/csv', asyncHandle
     }
   );
 
-  // Return CSV as downloadable file
+  // 2. Automatically send to TypsForYou
+  const sendResult = await DiscountGroupSyncService.sendDiscountGroupsToTypsForYou(
+    organizationId,
+    providerConfigId,
+    {
+      limit: limit ? parseInt(limit as string) : undefined,
+      search: search as string
+    }
+  );
+
+  logger.info('Discount groups auto-sync completed', {
+    csvGenerated: result.count,
+    sent: sendResult.sent,
+    loadedRecords: sendResult.loadedRecords,
+    success: sendResult.success
+  });
+
+  // 3. Return CSV as downloadable file
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="discount_groups_${Date.now()}.csv"`);
+  res.setHeader('X-Sync-Status', sendResult.success ? 'success' : 'failed');
+  res.setHeader('X-Records-Sent', String(sendResult.sent));
+  res.setHeader('X-Records-Loaded', String(sendResult.loadedRecords || 0));
   res.send(result.csv);
 }));
 
@@ -801,8 +824,8 @@ router.post('/discount-groups/:organizationId/:providerConfigId/send', asyncHand
  * @swagger
  * /sync/discount-subgroups/{organizationId}/{providerConfigId}/csv:
  *   get:
- *     summary: Generate CSV for discount sub-groups
- *     description: Generates CSV file from SQL Server discount sub-groups view
+ *     summary: Generate CSV for discount sub-groups and automatically send to TypsForYou
+ *     description: Generates CSV file from SQL Server discount sub-groups view and automatically sends to TypsForYou
  *     tags: [Sync]
  *     security:
  *       - bearerAuth: []
@@ -836,20 +859,21 @@ router.post('/discount-groups/:organizationId/:providerConfigId/send', asyncHand
  *         description: Filter by parent group code
  *     responses:
  *       200:
- *         description: CSV file generated
+ *         description: CSV file generated and sent to TypsForYou
  *         content:
  *           text/csv:
  *             schema:
  *               type: string
  */
 router.get('/discount-subgroups/:organizationId/:providerConfigId/csv', asyncHandler(async (req: Request, res: Response) => {
-  const { organizationId } = req.params;
+  const { organizationId, providerConfigId } = req.params;
   const { limit, search, groupCode } = req.query;
 
-  if (!organizationId) {
-    throw new AppError('Organization ID is required', 400);
+  if (!organizationId || !providerConfigId) {
+    throw new AppError('Organization ID and Provider Config ID are required', 400);
   }
 
+  // 1. Generate CSV
   const result = await DiscountSubGroupSyncService.generateDiscountSubGroupsCsv(
     organizationId,
     {
@@ -859,9 +883,30 @@ router.get('/discount-subgroups/:organizationId/:providerConfigId/csv', asyncHan
     }
   );
 
-  // Return CSV as downloadable file
+  // 2. Automatically send to TypsForYou
+  const sendResult = await DiscountSubGroupSyncService.sendDiscountSubGroupsToTypsForYou(
+    organizationId,
+    providerConfigId,
+    {
+      limit: limit ? parseInt(limit as string) : undefined,
+      search: search as string,
+      groupCode: groupCode as string
+    }
+  );
+
+  logger.info('Discount sub-groups auto-sync completed', {
+    csvGenerated: result.count,
+    sent: sendResult.sent,
+    loadedRecords: sendResult.loadedRecords,
+    success: sendResult.success
+  });
+
+  // 3. Return CSV as downloadable file
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="discount_subgroups_${Date.now()}.csv"`);
+  res.setHeader('X-Sync-Status', sendResult.success ? 'success' : 'failed');
+  res.setHeader('X-Records-Sent', String(sendResult.sent));
+  res.setHeader('X-Records-Loaded', String(sendResult.loadedRecords || 0));
   res.send(result.csv);
 }));
 
@@ -1173,17 +1218,54 @@ router.get('/article-warehouse/:organizationId/:providerConfigId/csv', asyncHand
   const { organizationId, providerConfigId } = req.params;
   const { limit, search, brandId, warehouseCode } = req.query;
 
+  const options = {
+    limit: limit ? parseInt(limit as string) : undefined,
+    search: search as string,
+    brandId: brandId as string,
+    warehouseCode: warehouseCode as string
+  };
+
+  // Generate CSV
   const result = await ArticleWarehouseSyncService.generateArticleWarehouseCsv(
     organizationId,
     providerConfigId,
-    {
-      limit: limit ? parseInt(limit as string) : undefined,
-      search: search as string,
-      brandId: brandId as string,
-      warehouseCode: warehouseCode as string
-    }
+    options
   );
 
+  // Auto-sync: Send to TypsForYou after generating CSV
+  let syncStatus = 'not_attempted';
+  let recordsSent = 0;
+  let loadedRecords = 0;
+
+  try {
+    logger.info('[ArticleWarehouseSync] Auto-sending to TypsForYou after CSV generation');
+    
+    const syncResult = await ArticleWarehouseSyncService.sendArticleWarehouseToTypsForYou(
+      organizationId,
+      providerConfigId,
+      options
+    );
+
+    syncStatus = syncResult.success ? 'success' : 'failed';
+    recordsSent = syncResult.sent;
+    loadedRecords = syncResult.loadedRecords || 0;
+
+    logger.info('[ArticleWarehouseSync] Auto-sync completed', {
+      success: syncResult.success,
+      recordsSent,
+      loadedRecords
+    });
+  } catch (syncError) {
+    syncStatus = 'error';
+    logger.error('[ArticleWarehouseSync] Auto-sync failed', {
+      error: syncError instanceof Error ? syncError.message : String(syncError)
+    });
+  }
+
+  // Add sync info to response headers
+  res.setHeader('X-Sync-Status', syncStatus);
+  res.setHeader('X-Records-Sent', recordsSent.toString());
+  res.setHeader('X-Records-Loaded', loadedRecords.toString());
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="article_warehouse_${Date.now()}.csv"`);
   res.send(result.csv);
@@ -1606,10 +1688,39 @@ router.get('/debug/check-article/:organizationId', asyncHandler(async (req: Requ
 
 /**
  * @swagger
+ * /sync/orders/:organizationId/stats:
+ *   get:
+ *     summary: Get order integration statistics
+ *     tags: [Sync - Orders]
+ *     parameters:
+ *       - in: path
+ *         name: organizationId
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *     responses:
+ *       200:
+ *         description: Statistics retrieved successfully
+ */
+router.get('/orders/:organizationId/stats', asyncHandler(async (req: Request, res: Response) => {
+  const { organizationId } = req.params;
+
+  const stats = await OrderIntegrationService.getIntegrationStats(organizationId);
+
+  res.json({
+    success: true,
+    data: stats
+  });
+}));
+
+/**
+ * @swagger
  * /sync/orders/{organizationId}/{providerConfigId}:
  *   get:
- *     summary: Get orders from TypsForYou
- *     tags: [Sync]
+ *     summary: Get orders from TypsForYou and automatically process them
+ *     description: Fetches orders from TypsForYou API and automatically inserts into SQL Server (DataDrive_CAB and DataDrive_LIN)
+ *     tags: [Sync - Orders]
  *     security:
  *       - bearerAuth: []
  *     parameters:
@@ -1618,21 +1729,29 @@ router.get('/debug/check-article/:organizationId', asyncHandler(async (req: Requ
  *         required: true
  *         schema:
  *           type: string
+ *           format: uuid
  *         description: Organization ID
  *       - in: path
  *         name: providerConfigId
  *         required: true
  *         schema:
  *           type: string
+ *           format: uuid
  *         description: Provider Config ID (TypsForYou)
  *       - in: query
  *         name: orderId
  *         schema:
  *           type: string
  *         description: Optional Order ID to filter
+ *       - in: query
+ *         name: autoProcess
+ *         schema:
+ *           type: boolean
+ *           default: true
+ *         description: Automatically process and insert orders into SQL Server (default true)
  *     responses:
  *       200:
- *         description: Orders fetched successfully
+ *         description: Orders fetched and processed successfully
  *       400:
  *         description: Invalid request
  *       500:
@@ -1640,23 +1759,163 @@ router.get('/debug/check-article/:organizationId', asyncHandler(async (req: Requ
  */
 router.get('/orders/:organizationId/:providerConfigId', asyncHandler(async (req: Request, res: Response) => {
   const { organizationId, providerConfigId } = req.params;
-  const { orderId } = req.query;
+  const { orderId, autoProcess } = req.query;
 
   if (!organizationId || !providerConfigId) {
     throw new AppError('Organization ID and Provider Config ID are required', 400);
   }
 
-  const result = await OrderSyncService.getOrdersFromTypsForYou(
+  // Fetch orders from TypsForYou
+  const fetchResult = await OrderSyncService.getOrdersFromTypsForYou(
     organizationId,
     providerConfigId,
     orderId as string | undefined
   );
 
-  res.json({
-    success: true,
-    message: `Successfully fetched ${result.count} order(s)`,
-    data: result
+  logger.info('Orders fetched from TypsForYou', {
+    organizationId,
+    providerConfigId,
+    ordersCount: fetchResult.count
   });
+
+  // Auto-process by default (unless explicitly disabled)
+  const shouldAutoProcess = autoProcess === undefined || autoProcess === 'true';
+
+  if (shouldAutoProcess && fetchResult.orders) {
+    logger.info('Auto-processing orders', { 
+      organizationId,
+      ordersCount: fetchResult.count 
+    });
+
+    try {
+      // Get provider config for TypsForYou notification credentials
+      const providerConfig = await prisma.providerConfig.findUnique({
+        where: { id: providerConfigId }
+      });
+
+      if (!providerConfig) {
+        throw new AppError('Provider configuration not found', 404);
+      }
+
+      // Decrypt credentials for TypsForYou notification
+      const subscriptionKey = providerConfig.webhookSecret 
+        ? CryptoService.decrypt(providerConfig.webhookSecret) 
+        : undefined;
+
+      // Get authentication token
+      const client = new Typs4YouClient(providerConfigId);
+      const token = await client.authenticate();
+
+      // Process and insert orders into SQL Server with TypsForYou notification
+      const processResult = await OrderProcessingService.processOrders(
+        organizationId,
+        fetchResult.orders as any,
+        {
+          notifyTypsForYou: true,
+          subscriptionKey,
+          token
+        }
+      );
+
+      // Build comprehensive message
+      let message = `Fetched ${fetchResult.count} order(s) from TypsForYou. `;
+      if (processResult.ordersProcessed > 0) {
+        message += `${processResult.ordersProcessed} new order(s) inserted with ${processResult.totalLines} line(s)`;
+      }
+      if (processResult.ordersSkipped > 0) {
+        message += processResult.ordersProcessed > 0 ? '. ' : '';
+        message += `${processResult.ordersSkipped} order(s) already existed in SQL`;
+      }
+      if (processResult.ordersNotified > 0) {
+        message += `. ${processResult.ordersNotified} order(s) marked as integrated in TypsForYou`;
+      }
+      const realErrors = processResult.errors.filter(e => e.type === 'error');
+      if (realErrors.length > 0) {
+        message += `. ${realErrors.length} order(s) failed`;
+      }
+      if (processResult.notificationErrors.length > 0) {
+        message += `. ${processResult.notificationErrors.length} notification(s) failed`;
+      }
+
+      res.json({
+        success: processResult.success,
+        message,
+        data: {
+          fetch: fetchResult,
+          processing: processResult
+        }
+      });
+
+      // Send email notification if orders were processed
+      if (processResult.ordersProcessed > 0 || processResult.ordersNotified > 0) {
+        try {
+          const emailService = (await import('@utils/email')).default;
+          const { config } = await import('@config/index');
+          
+          // Get notification emails from config
+          const notificationEmails = config.email.orderNotificationEmails;
+          
+          if (notificationEmails && notificationEmails.length > 0) {
+            // Build orders details for email
+            const ordersResponse = fetchResult.orders as any;
+            const ordersTable = ordersResponse?.Orders_Table || [];
+            
+            const ordersDetails = ordersTable.slice(0, 10).map((order: any) => ({
+              orderID: order.OrderID,
+              customerName: order.Name,
+              total: order.Total,
+              linesCount: order.Details?.length || 0,
+              orderDate: new Date(order.OrderDate).toLocaleDateString('pt-PT')
+            }));
+
+            await emailService.sendOrdersIntegratedEmail(notificationEmails, {
+              totalOrders: fetchResult.count,
+              newOrders: processResult.ordersProcessed,
+              duplicateOrders: processResult.ordersSkipped,
+              totalLines: processResult.totalLines,
+              notifiedToTypsForYou: processResult.ordersNotified,
+              organizationName: 'PHC SQL Server',
+              orders: ordersDetails
+            });
+
+            logger.info('Order notification email sent', {
+              recipients: notificationEmails,
+              ordersCount: processResult.ordersProcessed
+            });
+          }
+        } catch (emailError) {
+          // Don't fail the request if email fails
+          logger.error('Failed to send order notification email', {
+            error: emailError instanceof Error ? emailError.message : String(emailError)
+          });
+        }
+      }
+    } catch (error) {
+      logger.error('Failed to auto-process orders', {
+        organizationId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+
+      // Return fetch result even if processing failed
+      res.json({
+        success: false,
+        message: `Fetched ${fetchResult.count} order(s) but failed to process: ${error instanceof Error ? error.message : String(error)}`,
+        data: {
+          fetch: fetchResult,
+          processing: {
+            error: error instanceof Error ? error.message : String(error)
+          }
+        }
+      });
+    }
+  } else {
+    // Just return fetched orders without processing
+    res.json({
+      success: true,
+      message: `Successfully fetched ${fetchResult.count} order(s) (auto-process disabled)`,
+      data: fetchResult
+    });
+  }
 }));
 
 /**
@@ -1740,11 +1999,24 @@ router.post('/orders/:organizationId/process', asyncHandler(async (req: Request,
     ordersData
   );
 
+  // Build descriptive message
+  let message = '';
+  if (result.ordersProcessed > 0) {
+    message += `Successfully processed ${result.ordersProcessed} order(s) with ${result.totalLines} line(s)`;
+  }
+  if (result.ordersSkipped > 0) {
+    message += message ? '. ' : '';
+    message += `${result.ordersSkipped} order(s) skipped (already exist)`;
+  }
+  const realErrors = result.errors.filter(e => e.type === 'error');
+  if (realErrors.length > 0) {
+    message += message ? '. ' : '';
+    message += `${realErrors.length} order(s) failed`;
+  }
+
   res.json({
     success: result.success,
-    message: result.success 
-      ? `Successfully processed ${result.ordersProcessed} order(s) with ${result.totalLines} line(s)`
-      : `Processed ${result.ordersProcessed} order(s), ${result.errors.length} failed`,
+    message: message || 'No orders processed',
     data: result
   });
 }));
@@ -2066,6 +2338,105 @@ router.get('/errors/:errorId/details', asyncHandler(async (req: Request, res: Re
   res.json({
     success: true,
     data: formatted
+  });
+}));
+
+/**
+ * @swagger
+ * /sync/orders/:organizationId/integrate:
+ *   post:
+ *     summary: Notify TypsForYou about integrated orders
+ *     description: Reads integrated orders from DataDrive_CAB (integra=1 by PHC) and notifies TypsForYou
+ *     tags: [Sync - Orders]
+ *     parameters:
+ *       - in: path
+ *         name: organizationId
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Organization ID
+ *     responses:
+ *       200:
+ *         description: Orders notified successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 message:
+ *                   type: string
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     totalOrders:
+ *                       type: number
+ *                     notifiedOrders:
+ *                       type: number
+ *                     response:
+ *                       type: object
+ *                     errors:
+ *                       type: array
+ *                       items:
+ *                         type: string
+ */
+router.post('/orders/:organizationId/integrate', asyncHandler(async (req: Request, res: Response) => {
+  const { organizationId } = req.params;
+
+  // Get client-provider connection to find the provider
+  const connection = await prisma.clientProviderConnection.findFirst({
+    where: { 
+      clientOrgId: organizationId,
+      isActive: true 
+    },
+    include: {
+      providerOrg: {
+        include: {
+          providerConfig: true
+        }
+      }
+    }
+  });
+
+  if (!connection || !connection.providerOrg.providerConfig) {
+    throw new AppError('Provider configuration not found. Please connect this organization to a provider first.', 404);
+  }
+
+  const providerConfig = connection.providerOrg.providerConfig;
+
+  logger.info('[OrderIntegrate] Connection found:', {
+    clientOrg: connection.clientOrgId,
+    providerOrg: connection.providerOrgId,
+    hasApiKey: !!providerConfig.apiKey,
+    hasSubscriptionKey: !!providerConfig.webhookSecret
+  });
+
+  // Decrypt credentials
+  const subscriptionKey = providerConfig.webhookSecret ? CryptoService.decrypt(providerConfig.webhookSecret) : '';
+  const apiKey = providerConfig.apiKey ? CryptoService.decrypt(providerConfig.apiKey) : '';
+  const apiSecret = providerConfig.apiSecret ? CryptoService.decrypt(providerConfig.apiSecret) : '';
+
+  // Get token
+  const client = new Typs4YouClient(providerConfig.id);
+  const token = await client.authenticate();
+
+  // Notify TypsForYou about integrated orders
+  const result = await OrderIntegrationService.notifyIntegratedOrders(
+    organizationId,
+    subscriptionKey,
+    token
+  );
+
+  logger.info('[OrderIntegrate] Service completed');
+
+  res.json({
+    success: result.success,
+    message: result.success
+      ? `Successfully notified TypsForYou about ${result.notifiedOrders} orders`
+      : 'Order notification completed with errors',
+    data: result
   });
 }));
 

@@ -36,7 +36,12 @@ export const updateMemberRoleSchema = z.object({
   role: z.enum(['OWNER', 'ADMIN', 'MANAGER', 'MEMBER', 'VIEWER']),
 });
 
+export const updateMemberStatusSchema = z.object({
+  isActive: z.boolean(),
+});
+
 export type CreateOrganizationData = z.infer<typeof createOrganizationSchema>;
 export type UpdateOrganizationData = z.infer<typeof updateOrganizationSchema>;
 export type InviteMemberData = z.infer<typeof inviteMemberSchema>;
 export type UpdateMemberRoleData = z.infer<typeof updateMemberRoleSchema>;
+export type UpdateMemberStatusData = z.infer<typeof updateMemberStatusSchema>;

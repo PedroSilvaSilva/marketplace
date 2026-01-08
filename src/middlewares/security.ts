@@ -23,7 +23,7 @@ export const helmetConfig = helmet({
   referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
 });
 
-// Rate limiting
+// Rate limiting (much more permissive for frontend dashboards)
 export const rateLimiter = rateLimit({
   windowMs: config.rateLimit.windowMs,
   max: config.rateLimit.maxRequests,
@@ -31,8 +31,8 @@ export const rateLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   skip: (req: Request) => {
-    // Skip rate limiting for health checks
-    return req.path === '/health';
+    // Skip rate limiting for health checks and stats endpoints
+    return req.path === '/health' || req.path.includes('/stats');
   },
   keyGenerator: (req: Request) => {
     // Use IP address as key
