@@ -640,6 +640,87 @@ class EmailService {
       `
     });
   }
+
+  async sendArticlesSyncedEmail(
+    recipientEmail: string,
+    summary: {
+      totalSent: number;
+      loadedRecords: number;
+      syncMode: 'CHECKPOINT' | 'INCREMENTAL';
+      checkpoint?: string | null;
+      totalProcessed?: number | null;
+    }
+  ): Promise<void> {
+    const { totalSent, loadedRecords, syncMode, checkpoint, totalProcessed } = summary;
+    
+    const syncModeText = syncMode === 'CHECKPOINT' ? '🔄 Carga Sequencial (Checkpoint)' : '⚡ Sincronização Incremental';
+    const syncModeColor = syncMode === 'CHECKPOINT' ? '#007bff' : '#28a745';
+
+    await this.sendEmail({
+      to: recipientEmail,
+      subject: `✅ ${totalSent} Artigo(s) Sincronizado(s) - TypsForYou`,
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; background-color: #f9f9f9; padding: 20px;">
+          <div style="background-color: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+            <div style="text-align: center; margin-bottom: 30px;">
+              <h1 style="color: #28a745; margin: 0;">✅ Artigos Sincronizados</h1>
+              <p style="color: #666; margin-top: 10px;">Sistema de Integração CSW → TypsForYou</p>
+            </div>
+
+            <div style="background-color: ${syncMode === 'CHECKPOINT' ? '#e7f3ff' : '#f0f8f5'}; padding: 20px; border-radius: 6px; margin-bottom: 30px;">
+              <div style="display: inline-block; background-color: ${syncModeColor}; color: white; padding: 6px 16px; border-radius: 20px; margin-bottom: 15px; font-weight: bold;">
+                ${syncModeText}
+              </div>
+              <h2 style="margin-top: 0; color: #155724;">📊 Resumo da Sincronização</h2>
+              <table style="width: 100%; border-collapse: collapse;">
+                <tr>
+                  <td style="padding: 8px 0;"><strong>📤 Artigos Enviados:</strong></td>
+                  <td style="padding: 8px 0; text-align: right;"><span style="background-color: #007bff; color: white; padding: 4px 12px; border-radius: 4px; font-weight: bold;">${totalSent}</span></td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 0;"><strong>✅ Carregados na API:</strong></td>
+                  <td style="padding: 8px 0; text-align: right;"><span style="background-color: #28a745; color: white; padding: 4px 12px; border-radius: 4px; font-weight: bold;">${loadedRecords}</span></td>
+                </tr>
+                ${syncMode === 'CHECKPOINT' && totalProcessed ? `
+                <tr>
+                  <td style="padding: 8px 0;"><strong>📊 Total Processado:</strong></td>
+                  <td style="padding: 8px 0; text-align: right;"><span style="background-color: #6c757d; color: white; padding: 4px 12px; border-radius: 4px; font-weight: bold;">${totalProcessed.toLocaleString('pt-PT')}</span></td>
+                </tr>
+                ` : ''}
+                ${syncMode === 'CHECKPOINT' && checkpoint ? `
+                <tr>
+                  <td style="padding: 8px 0;"><strong>🔖 Checkpoint:</strong></td>
+                  <td style="padding: 8px 0; text-align: right; font-family: monospace; font-size: 12px;">${checkpoint}</td>
+                </tr>
+                ` : ''}
+                <tr>
+                  <td style="padding: 8px 0;"><strong>📅 Data/Hora:</strong></td>
+                  <td style="padding: 8px 0; text-align: right;">${new Date().toLocaleString('pt-PT')}</td>
+                </tr>
+              </table>
+            </div>
+
+            ${syncMode === 'CHECKPOINT' ? `
+            <div style="background-color: #d1ecf1; padding: 20px; border-radius: 6px; border-left: 4px solid #17a2b8; margin-bottom: 20px;">
+              <p style="margin: 0; color: #0c5460;"><strong>ℹ️ Modo Checkpoint Ativo</strong></p>
+              <p style="margin: 10px 0 0 0; color: #0c5460; font-size: 14px;">Sincronização sequencial em progresso. Processando 1000 artigos por batch.</p>
+            </div>
+            ` : `
+            <div style="background-color: #d4edda; padding: 20px; border-radius: 6px; border-left: 4px solid #28a745; margin-bottom: 20px;">
+              <p style="margin: 0; color: #155724;"><strong>✨ Modo Incremental Ativo</strong></p>
+              <p style="margin: 10px 0 0 0; color: #155724; font-size: 14px;">Apenas artigos modificados foram enviados.</p>
+            </div>
+            `}
+
+            <div style="text-align: center; padding: 20px 0; color: #666; font-size: 14px;">
+              <p style="margin: 0;">Este email foi gerado automaticamente pelo sistema de integração</p>
+              <p style="margin: 5px 0 0 0;">CSW Markets Integrator</p>
+            </div>
+          </div>
+        </div>
+      `
+    });
+  }
 }
 
 export default new EmailService();

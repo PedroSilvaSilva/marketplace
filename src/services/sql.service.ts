@@ -54,8 +54,8 @@ export class SQLService {
         min: config.poolMin || 0,
         idleTimeoutMillis: 30000
       },
-      connectionTimeout: config.connectionTimeout || 15000,
-      requestTimeout: config.requestTimeout || 30000
+      connectionTimeout: config.connectionTimeout || 30000, // Increased from 15000
+      requestTimeout: config.requestTimeout || 60000 // Increased from 30000 for heavy queries
     };
 
     // Create and connect pool
@@ -154,6 +154,9 @@ export class SQLService {
       limit?: number;
       search?: string;
       brandId?: string;
+      lastProcessedId?: string; // Checkpoint: último ID processado (fase 1)
+      modifiedSince?: Date; // Incremental: artigos modificados após data (fase 2)
+      excludedBrandIds?: number[]; // BrandIDs to exclude from results
     }
   ) {
     const config = await prisma.dataSourceConfig.findUnique({
@@ -165,31 +168,60 @@ export class SQLService {
       throw new AppError('Product view not configured', 400);
     }
 
+    const limit = options?.limit || 1000; // Default 1000 para batch processing
     const page = options?.page || 1;
-    const limit = options?.limit || 50;
-    const offset = (page - 1) * limit;
+    const offset = options?.lastProcessedId ? 0 : (page - 1) * limit; // Usa checkpoint ou pagination
 
-    // Build query with cleaned fields
+    // Build query with ROW_NUMBER() para eliminar duplicados (mantém registo mais recente)
     let query = `
       SELECT 
         BrandId,
-        LTRIM(RTRIM(ArticleDiscountGroupCode)) as ArticleDiscountGroupCode,
-        LTRIM(RTRIM(PartNumber)) as PartNumber,
-        LTRIM(RTRIM(DiscountSubGroupCode)) as DiscountSubGroupCode,
-        LTRIM(RTRIM(InternalPartNumber)) as InternalPartNumber,
-        LTRIM(RTRIM(CategoryCode)) as CategoryCode,
-        LTRIM(RTRIM(ISNULL(AttributeID, ''))) as AttributeID,
+        ArticleDiscountGroupCode,
+        PartNumber,
+        DiscountSubGroupCode,
+        InternalPartNumber,
+        CategoryCode,
+        AttributeID,
         Active,
         Availability,
         Service,
-        ISNULL(Sort, 0) as Sort,
-        LTRIM(RTRIM(ISNULL(Picture, ''))) as Picture,
-        LTRIM(RTRIM(ArticleName)) as ArticleName,
-        LTRIM(RTRIM(ArticleDescription)) as ArticleDescription,
-        ISNULL(DaysAsNew, 0) as DaysAsNew,
-        LTRIM(RTRIM(ISNULL(Tag, ''))) as Tag,
-        LTRIM(RTRIM(ISNULL(ReservedForFutureUse, ''))) as ReservedForFutureUse
-      FROM ${config.productView}
+        Sort,
+        Picture,
+        ArticleName,
+        ArticleDescription,
+        DaysAsNew,
+        Tag,
+        ReservedForFutureUse,
+        DataCriacao,
+        DataAlteracao,
+        CompositeId
+      FROM (
+        SELECT 
+          BrandId,
+          LTRIM(RTRIM(ArticleDiscountGroupCode)) as ArticleDiscountGroupCode,
+          LTRIM(RTRIM(PartNumber)) as PartNumber,
+          LTRIM(RTRIM(DiscountSubGroupCode)) as DiscountSubGroupCode,
+          LTRIM(RTRIM(InternalPartNumber)) as InternalPartNumber,
+          LTRIM(RTRIM(CategoryCode)) as CategoryCode,
+          LTRIM(RTRIM(ISNULL(AttributeID, ''))) as AttributeID,
+          Active,
+          Availability,
+          Service,
+          ISNULL(Sort, 0) as Sort,
+          LTRIM(RTRIM(ISNULL(Picture, ''))) as Picture,
+          LTRIM(RTRIM(ArticleName)) as ArticleName,
+          LTRIM(RTRIM(ArticleDescription)) as ArticleDescription,
+          ISNULL(DaysAsNew, 0) as DaysAsNew,
+          LTRIM(RTRIM(ISNULL(Tag, ''))) as Tag,
+          LTRIM(RTRIM(ISNULL(ReservedForFutureUse, ''))) as ReservedForFutureUse,
+          DataCriacao,
+          DataAlteracao,
+          CONCAT(CAST(BrandId AS VARCHAR), '-', PartNumber) as CompositeId,
+          ROW_NUMBER() OVER (
+            PARTITION BY BrandId, PartNumber 
+            ORDER BY ISNULL(DataAlteracao, DataCriacao) DESC, DataCriacao DESC
+          ) as RowNum
+        FROM ${config.productView}
     `;
 
     // Build WHERE conditions
@@ -207,6 +239,22 @@ export class SQLService {
       AND ArticleDiscountGroupCode IS NOT NULL AND LTRIM(RTRIM(ArticleDiscountGroupCode)) <> ''
     `);
     
+    // FILTER: Exclude BrandIDs that TypsForYou API rejects (67, 7000, 7820)
+    // Plus any dynamically excluded BrandIDs from API errors
+    const excludedBrands = [67, 7000, 7820, ...(options?.excludedBrandIds || [])];
+    conditions.push(`BrandId NOT IN (${excludedBrands.join(', ')})`);
+    
+    // Fase 1: Checkpoint - começar após o último ID processado
+    if (options?.lastProcessedId) {
+      conditions.push(`CONCAT(CAST(BrandId AS VARCHAR), '-', PartNumber) > '${options.lastProcessedId}'`);
+    }
+    
+    // Fase 2: Incremental - artigos modificados após última sincronização
+    if (options?.modifiedSince) {
+      const dateStr = options.modifiedSince.toISOString().replace('T', ' ').substring(0, 19);
+      conditions.push(`DataAlteracao > '${dateStr}'`);
+    }
+    
     if (options?.brandId) {
       conditions.push(`BrandId = ${options.brandId}`);
     }
@@ -222,19 +270,31 @@ export class SQLService {
     if (conditions.length > 0) {
       query += ` WHERE ${conditions.join(' AND ')}`;
     }
-
-    // Add pagination
+    
+    // Fechar subquery e filtrar apenas registos únicos (RowNum = 1)
     query += `
-      ORDER BY BrandId, PartNumber
-      OFFSET ${offset} ROWS
+      ) AS UniqueArticles
+      WHERE RowNum = 1
+      ORDER BY CompositeId
+      OFFSET ${options?.lastProcessedId ? 0 : offset} ROWS
       FETCH NEXT ${limit} ROWS ONLY
     `;
 
-    // Get total count
-    let countQuery = `SELECT COUNT(*) as total FROM ${config.productView}`;
+    // Get total count (com eliminação de duplicados)
+    let countQuery = `
+      SELECT COUNT(*) as total 
+      FROM (
+        SELECT BrandId, PartNumber,
+               ROW_NUMBER() OVER (PARTITION BY BrandId, PartNumber ORDER BY ISNULL(DataAlteracao, DataCriacao) DESC) as RowNum
+        FROM ${config.productView}
+    `;
     if (conditions.length > 0) {
       countQuery += ` WHERE ${conditions.join(' AND ')}`;
     }
+    countQuery += `
+      ) AS CountQuery
+      WHERE RowNum = 1
+    `;
 
     const [data, countResult] = await Promise.all([
       this.query(organizationId, query),
@@ -243,9 +303,13 @@ export class SQLService {
 
     const total = countResult[0]?.total || 0;
     const totalPages = Math.ceil(total / limit);
+    
+    // Obter último ID processado neste batch
+    const lastId = data.length > 0 ? data[data.length - 1].CompositeId : null;
 
     return {
       data,
+      lastProcessedId: lastId,
       pagination: {
         page,
         limit,

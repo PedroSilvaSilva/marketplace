@@ -6,6 +6,7 @@ import { DiscountGroupSchedulerService } from '@modules/sync/services/discount-g
 import { DiscountSubGroupSyncService } from '@modules/sync/services/discount-subgroup-sync.service';
 import { DiscountSubGroupSchedulerService } from '@modules/sync/services/discount-subgroup-scheduler.service';
 import { ArticleSyncService } from '@modules/sync/services/article-sync.service';
+import { ArticleSchedulerService } from '@modules/sync/services/article-scheduler.service';
 import { ArticleWarehouseSyncService } from '@modules/sync/services/article-warehouse-sync.service';
 import { ArticleWarehouseSchedulerService } from '@modules/sync/services/article-warehouse-scheduler.service';
 import { CustomerSyncService } from '@modules/sync/services/customer-sync.service';
@@ -49,7 +50,9 @@ export class CronSchedulerService {
     await this.loadAndScheduleAll();
 
     // Check for configuration changes every minute
-    this.scheduleConfigRefresh();
+    // DISABLED: This was causing cron tasks to be cancelled and rescheduled every minute
+    // which prevented longer-interval tasks (like ARTICLES) from executing
+    // this.scheduleConfigRefresh();
 
     logger.info('[CronScheduler] Started successfully');
   }
@@ -151,11 +154,7 @@ export class CronSchedulerService {
           break;
 
         case SyncType.ARTICLES:
-          result = await ArticleSyncService.sendArticlesToTypsForYou(
-            organizationId,
-            providerConfigId,
-            config.options || {}
-          );
+          result = await ArticleSchedulerService.syncArticles(id);
           break;
 
         case SyncType.CUSTOMERS:
@@ -238,25 +237,25 @@ export class CronSchedulerService {
    * Convert interval in seconds to cron expression
    */
   private intervalToCron(intervalSeconds: number): string {
-    // Every X seconds (1-59)
+    // Every X seconds (1-59) - 6 fields with seconds
     if (intervalSeconds < 60) {
       return `*/${intervalSeconds} * * * * *`;
     }
 
-    // Every X minutes
+    // Every X minutes - MUST use 6 fields (node-cron requires seconds field)
     if (intervalSeconds < 3600) {
       const minutes = Math.floor(intervalSeconds / 60);
-      return `*/${minutes} * * * *`;
+      return `0 */${minutes} * * * *`; // Start at second 0 of every X minutes
     }
 
-    // Every X hours
+    // Every X hours - MUST use 6 fields
     if (intervalSeconds < 86400) {
       const hours = Math.floor(intervalSeconds / 3600);
-      return `0 */${hours} * * *`;
+      return `0 0 */${hours} * * *`; // At second 0, minute 0, of every X hours
     }
 
-    // Daily
-    return '0 0 * * *';
+    // Daily - 6 fields
+    return '0 0 0 * * *'; // At midnight (second 0, minute 0, hour 0)
   }
 
   /**

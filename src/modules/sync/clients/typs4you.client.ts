@@ -791,14 +791,28 @@ export class Typs4YouClient {
       const responseData = error.response?.data;
       const message = responseData?.ExitMesssage || responseData?.message || error.message;
       const errors = responseData?.DataErrorsFound;
+      const loadedRecords = responseData?.LoadedRecords || 0;
       
+      // Se carregou alguns registos com sucesso, considerar como sucesso parcial
+      if (loadedRecords > 0) {
+        logger.warn('Partial upload success with some errors:', {
+          loadedRecords,
+          message,
+          errors: errors?.slice(0, 5),
+          exitCode: responseData?.ExitCode
+        });
+        
+        // Retornar dados da resposta para continuar processamento
+        return responseData;
+      }
+      
+      // Falha total - nenhum registo carregado
       logger.error('Failed to upload articles CSV to TypsForYou:', {
         message,
-        errors: errors?.slice(0, 5), // Log first 5 errors
+        errors: errors?.slice(0, 5),
         exitCode: responseData?.ExitCode
       });
       
-      // Include detailed errors in exception
       const errorDetail = errors && errors.length > 0 
         ? `${message}. First errors: ${JSON.stringify(errors.slice(0, 3))}`
         : message;

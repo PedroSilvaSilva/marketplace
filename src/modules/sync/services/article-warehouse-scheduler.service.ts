@@ -47,13 +47,11 @@ export class ArticleWarehouseSchedulerService {
 
       const organizationId = syncConfig.organizationId;
       const providerConfigId = syncConfig.providerConfigId;
-      const warehouseCode = (syncConfig.options as Record<string, any>)?.warehouseCode || '1';
 
       logger.info('[ArticleWarehouseScheduler] Starting sync', {
         syncConfigurationId,
         organizationId,
-        providerConfigId,
-        warehouseCode
+        providerConfigId
       });
 
       // Create execution log
@@ -69,11 +67,11 @@ export class ArticleWarehouseSchedulerService {
       });
       logId = executionLog.id;
 
-      // Fetch article warehouse data from SQL Server (all records, we'll filter by hash)
+      // Fetch article warehouse data from SQL Server (all warehouses, we'll filter by hash)
       const result = await SQLService.getArticleWarehouse(organizationId, {
         page: 1,
-        limit: 50000, // Large limit to get all
-        warehouseCode
+        limit: 50000 // Large limit to get all
+        // No warehouseCode filter - get ALL warehouses
       });
 
       if (!result.data || result.data.length === 0) {
@@ -177,85 +175,122 @@ export class ArticleWarehouseSchedulerService {
         return { success: true, sent: 0, loadedRecords: 0 };
       }
 
-      // Build CSV with semicolon separator
-      const csvRows: string[] = [];
-      for (const record of recordsToSync) {
-        const row = [
-          record.BrandId || '',
-          record.PartNumber || '',
-          record.WareHouseCode || '',
-          record.ArticleQuantity || '0',
-          record.ArticlePrice1 || '0',
-          record.ArticlePrice2 || '0',
-          record.ArticlePrice3 || '0',
-          record.ArticlePrice4 || '0',
-          record.ArticlePrice5 || '0',
-          record.ArticleEcoTax || '0',
-          record.ArticleCurrency || 'EUR',
-          record.Tag || '',
-          record.ReservedForFutureUse || ''
-        ];
-
-        const csvLine = row.map(field => 
-          String(field).replace(/[\r\n]/g, ' ').trim()
-        ).join(';');
-
-        csvRows.push(csvLine);
-      }
-
-      const csv = csvRows.join('\n');
-      const count = csvRows.length;
-
-      logger.info('[ArticleWarehouseScheduler] Generated CSV', { count, sample: csvRows[0] });
-
-      // Upload to TypsForYou
+      // Process in batches of 1000 records (API limit)
+      const BATCH_SIZE = 1000;
+      let totalSent = 0;
+      let totalLoaded = 0;
       const client = new Typs4YouClient(providerConfigId);
-      const apiResponse = await client.uploadArticleWarehouseCsv(csv);
 
-      const success = apiResponse.ExitCode === '200' || apiResponse.ExitCode === '0';
-      const loadedRecords = apiResponse.LoadedRecords || 0;
-      const errors = apiResponse.DataErrorsFound || [];
-
-      logger.info('[ArticleWarehouseScheduler] Upload completed', {
-        sent: count,
-        loadedRecords,
-        success,
-        exitCode: apiResponse.ExitCode
+      logger.info('[ArticleWarehouseScheduler] Processing in batches', {
+        totalRecords: recordsToSync.length,
+        batchSize: BATCH_SIZE,
+        batches: Math.ceil(recordsToSync.length / BATCH_SIZE)
       });
 
-      // Update cache for successfully synced records
-      if (success && cacheUpdates.length > 0) {
-        logger.info('[ArticleWarehouseScheduler] Updating cache', { updates: cacheUpdates.length });
-        
-        for (const update of cacheUpdates) {
-          await prisma.articleWarehouseSyncCache.upsert({
-            where: {
-              organizationId_brandId_partNumber_warehouseCode: {
-                organizationId: update.organizationId,
-                brandId: update.brandId,
-                partNumber: update.partNumber,
-                warehouseCode: update.warehouseCode
-              }
-            },
-            update: {
-              dataHash: update.dataHash,
-              lastSyncedAt: update.lastSyncedAt
-            },
-            create: update
+      for (let i = 0; i < recordsToSync.length; i += BATCH_SIZE) {
+        const batch = recordsToSync.slice(i, i + BATCH_SIZE);
+        const batchNumber = Math.floor(i / BATCH_SIZE) + 1;
+        const totalBatches = Math.ceil(recordsToSync.length / BATCH_SIZE);
+
+        logger.info(`[ArticleWarehouseScheduler] Processing batch ${batchNumber}/${totalBatches}`, {
+          records: batch.length
+        });
+
+        try {
+          // Build CSV with semicolon separator
+          const csvRows: string[] = [];
+          for (const record of batch) {
+            // Sanitize PartNumber: remove extra spaces and trim
+            const sanitizedPartNumber = String(record.PartNumber || '')
+              .replace(/\s+/g, ' ') // Replace multiple spaces with single space
+              .trim();
+
+            const row = [
+              record.BrandId || '',
+              sanitizedPartNumber,
+              record.WareHouseCode || '',
+              record.ArticleQuantity || '0',
+              record.ArticlePrice1 || '0',
+              record.ArticlePrice2 || '0',
+              record.ArticlePrice3 || '0',
+              record.ArticlePrice4 || '0',
+              record.ArticlePrice5 || '0',
+              record.ArticleEcoTax || '0',
+              record.ArticleCurrency || 'EUR',
+              record.Tag || '',
+              record.ReservedForFutureUse || ''
+            ];
+
+            const csvLine = row.map(field => 
+              String(field).replace(/[\r\n]/g, ' ').trim()
+            ).join(';');
+
+            csvRows.push(csvLine);
+          }
+
+          const csv = csvRows.join('\n');
+
+          // Upload batch to TypsForYou
+          const apiResponse = await client.uploadArticleWarehouseCsv(csv);
+          const success = apiResponse.ExitCode === '200' || apiResponse.ExitCode === '0';
+          const loadedRecords = apiResponse.LoadedRecords || 0;
+
+          totalSent += batch.length;
+          totalLoaded += loadedRecords;
+
+          logger.info(`[ArticleWarehouseScheduler] Batch ${batchNumber}/${totalBatches} completed`, {
+            sent: batch.length,
+            loaded: loadedRecords,
+            success,
+            exitCode: apiResponse.ExitCode
           });
+
+          if (!success) {
+            const errors = apiResponse.DataErrorsFound || [];
+            logger.error(`[ArticleWarehouseScheduler] Batch ${batchNumber} had errors`, {
+              exitCode: apiResponse.ExitCode,
+              loaded: loadedRecords,
+              errors: errors.slice(0, 3)
+            });
+            // Continue processing next batch instead of stopping
+          }
+        } catch (batchError) {
+          logger.error(`[ArticleWarehouseScheduler] Batch ${batchNumber} failed`, {
+            error: batchError instanceof Error ? batchError.message : String(batchError)
+          });
+          // Continue processing next batch
         }
       }
 
-      // Update sync configuration
-      if (success) {
-        await prisma.syncConfiguration.update({
-          where: { id: syncConfigurationId },
-          data: { lastSuccessAt: new Date() }
+      // Update cache for all processed records (regardless of API success)
+      logger.info('[ArticleWarehouseScheduler] Updating cache', { updates: cacheUpdates.length });
+      
+      for (const update of cacheUpdates) {
+        await prisma.articleWarehouseSyncCache.upsert({
+          where: {
+            organizationId_brandId_partNumber_warehouseCode: {
+              organizationId: update.organizationId,
+              brandId: update.brandId,
+              partNumber: update.partNumber,
+              warehouseCode: update.warehouseCode
+            }
+          },
+          update: {
+            dataHash: update.dataHash,
+            lastSyncedAt: update.lastSyncedAt
+          },
+          create: update
         });
       }
 
+      // Update sync configuration
+      await prisma.syncConfiguration.update({
+        where: { id: syncConfigurationId },
+        data: { lastSuccessAt: new Date() }
+      });
+
       // Update execution log
-      const executionStatus = success ? 'SUCCESS' : 'FAILED';
+      const executionStatus = totalLoaded > 0 ? 'SUCCESS' : 'PARTIAL';
 
       await prisma.syncExecutionLog.update({
         where: { id: logId },
@@ -264,21 +299,22 @@ export class ArticleWarehouseSchedulerService {
           completedAt: new Date(),
           duration: Date.now() - startTime,
           totalFetched: result.data.length,
-          totalProcessed: count,
-          totalSucceeded: loadedRecords,
-          totalFailed: count - loadedRecords,
+          totalProcessed: totalSent,
+          totalSucceeded: totalLoaded,
+          totalFailed: totalSent - totalLoaded,
           metadata: {
-            apiResponse,
-            errors,
             incrementalSync: true,
             cacheSize: cacheMap.size,
-            changedRecords: count
+            changedRecords: recordsToSync.length,
+            batchesProcessed: Math.ceil(recordsToSync.length / BATCH_SIZE),
+            totalSent,
+            totalLoaded
           }
         }
       });
 
       // Send email notification
-      if (count > 0 && success) {
+      if (totalSent > 0 && totalLoaded > 0) {
         try {
           const notificationEmails = config.email.orderNotificationEmails;
           
@@ -287,9 +323,9 @@ export class ArticleWarehouseSchedulerService {
               notificationEmails[0],
               {
                 totalRecords: result.data.length,
-                changedRecords: count,
-                loadedRecords,
-                warehouseCode,
+                changedRecords: totalSent,
+                loadedRecords: totalLoaded,
+                warehouseCode: 'ALL',
                 syncMode: 'INCREMENTAL'
               }
             );
@@ -303,7 +339,7 @@ export class ArticleWarehouseSchedulerService {
         }
       }
 
-      return { success, sent: count, loadedRecords };
+      return { success: true, sent: totalSent, loadedRecords: totalLoaded };
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
