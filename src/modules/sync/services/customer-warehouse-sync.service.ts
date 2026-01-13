@@ -2,6 +2,7 @@ import { SQLService } from '../../../services/sql.service';
 import { Typs4YouClient } from '../clients/typs4you.client';
 import logger from '../../../config/logger';
 import { AppError } from '../../../utils/errors';
+import { ErrorNotificationService } from '@services/error-notification.service';
 
 export class CustomerWarehouseSyncService {
   /**
@@ -138,6 +139,39 @@ export class CustomerWarehouseSyncService {
           errors: response.DataErrorsFound
         });
 
+        // Extract failed CustomerIDs and WarehouseCodes from errors
+        const errors = response.DataErrorsFound || [];
+        const failedIdentifiers = errors
+          .map((err: any) => {
+            const customerMatch = err.Error_Message?.match(/CustomerID[:\s]+([A-Z0-9-]+)/i);
+            const warehouseMatch = err.Error_Message?.match(/WarehouseCode[:\s]+([A-Z0-9-]+)/i);
+            if (customerMatch || warehouseMatch) {
+              return `${customerMatch?.[1] || '?'}:${warehouseMatch?.[1] || '?'}`;
+            }
+            return null;
+          })
+          .filter((id: any): id is string => id !== null)
+          .slice(0, 20);
+
+        // Send error notification
+        await ErrorNotificationService.sendErrorNotification({
+          context: 'customerWarehouse',
+          organizationId,
+          errorMessage: `Customer warehouses sync failed: ${response.ExitMesssage || 'Unknown error'}`,
+          errorDetails: {
+            sent: csvResult.count,
+            loaded: loadedRecords,
+            failed: csvResult.count - loadedRecords,
+            exitCode,
+            errors: errors.slice(0, 10),
+            failedIdentifiers
+          },
+          stackTrace: null,
+          metadata: {
+            providerConfigId
+          }
+        });
+
         throw new AppError(
           `Failed to upload customer warehouses: ${response.ExitMesssage || 'Unknown error'}. Errors: ${JSON.stringify(response.DataErrorsFound)}`,
           400
@@ -146,6 +180,24 @@ export class CustomerWarehouseSyncService {
 
     } catch (error: unknown) {
       logger.error('Failed to send customer warehouses to TypsForYou:', error);
+
+      // Send critical error notification
+      if (error instanceof Error && !error.message.includes('Failed to upload customer warehouses')) {
+        await ErrorNotificationService.sendErrorNotification({
+          context: 'customerWarehouse',
+          organizationId,
+          errorMessage: `Customer warehouses sync failed critically: ${error.message}`,
+          errorDetails: {
+            errorType: error.name,
+            providerConfigId
+          },
+          stackTrace: error.stack,
+          metadata: {
+            providerConfigId
+          }
+        });
+      }
+
       throw error;
     }
   }

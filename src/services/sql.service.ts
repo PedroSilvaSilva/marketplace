@@ -444,6 +444,7 @@ export class SQLService {
       page?: number;
       limit?: number;
       search?: string;
+      lastSyncDate?: Date;
     }
   ) {
     const config = await prisma.dataSourceConfig.findUnique({
@@ -468,12 +469,20 @@ export class SQLService {
       FROM u_csw_tips4y_CustomerDiscountGroup
     `;
 
+    const conditions: string[] = [];
+
     if (options?.search) {
-      query += `
-        WHERE 
-          CustomerDiscountGroupCode LIKE '%${options.search}%' 
-          OR DiscountGroupName LIKE '%${options.search}%'
-      `;
+      conditions.push(`(CustomerDiscountGroupCode LIKE '%${options.search}%' OR DiscountGroupName LIKE '%${options.search}%')`);
+    }
+
+    // Incremental sync: only get records created or modified since last sync
+    if (options?.lastSyncDate) {
+      const dateStr = options.lastSyncDate.toISOString().replace('T', ' ').split('.')[0];
+      conditions.push(`(DataCriacao >= '${dateStr}' OR DataAlteracao >= '${dateStr}')`);
+    }
+
+    if (conditions.length > 0) {
+      query += ` WHERE ${conditions.join(' AND ')}`;
     }
 
     // Add pagination
@@ -485,12 +494,8 @@ export class SQLService {
 
     // Get total count
     let countQuery = `SELECT COUNT(*) as total FROM u_csw_tips4y_CustomerDiscountGroup`;
-    if (options?.search) {
-      countQuery += `
-        WHERE 
-          CustomerDiscountGroupCode LIKE '%${options.search}%' 
-          OR DiscountGroupName LIKE '%${options.search}%'
-      `;
+    if (conditions.length > 0) {
+      countQuery += ` WHERE ${conditions.join(' AND ')}`;
     }
 
     const [data, countResult] = await Promise.all([
@@ -513,7 +518,11 @@ export class SQLService {
     };
   }
 
-  static async getCustomers(organizationId: string, customerId?: string) {
+  static async getCustomers(
+    organizationId: string, 
+    customerId?: string,
+    lastSyncDate?: Date
+  ) {
     const config = await prisma.dataSourceConfig.findUnique({
       where: { organizationId }
     });
@@ -525,9 +534,24 @@ export class SQLService {
     // Use SELECT * to get all available columns
     let query = `SELECT * FROM ${config.customerView}`;
     
+    const conditions: string[] = [];
+    
     if (customerId) {
-      query += ` WHERE CustomerID = '${customerId}'`;
+      conditions.push(`CustomerID = '${customerId}'`);
     }
+    
+    // Incremental sync: only get customers created or modified since last sync
+    if (lastSyncDate) {
+      const dateStr = lastSyncDate.toISOString().replace('T', ' ').split('.')[0];
+      conditions.push(`(DataCriacao >= '${dateStr}' OR DataAlteracao >= '${dateStr}')`);
+    }
+    
+    if (conditions.length > 0) {
+      query += ` WHERE ${conditions.join(' AND ')}`;
+    }
+    
+    // Order by date to track progress
+    query += ` ORDER BY COALESCE(DataAlteracao, DataCriacao, GETDATE())`;
 
     return this.query(organizationId, query);
   }
@@ -541,6 +565,7 @@ export class SQLService {
       page?: number;
       limit?: number;
       customerId?: string;
+      lastSyncDate?: Date;
     }
   ) {
     const config = await prisma.dataSourceConfig.findUnique({
@@ -566,8 +591,20 @@ export class SQLService {
       FROM u_csw_tips4y_CustomersWarehouses
     `;
 
+    const conditions: string[] = [];
+
     if (options?.customerId) {
-      query += ` WHERE CustomerID = '${options.customerId}'`;
+      conditions.push(`CustomerID = '${options.customerId}'`);
+    }
+
+    // Incremental sync: only get records created or modified since last sync
+    if (options?.lastSyncDate) {
+      const dateStr = options.lastSyncDate.toISOString().replace('T', ' ').split('.')[0];
+      conditions.push(`(DataCriacao >= '${dateStr}' OR DataAlteracao >= '${dateStr}')`);
+    }
+
+    if (conditions.length > 0) {
+      query += ` WHERE ${conditions.join(' AND ')}`;
     }
 
     // Add pagination
@@ -579,8 +616,8 @@ export class SQLService {
 
     // Get total count
     let countQuery = `SELECT COUNT(*) as total FROM u_csw_tips4y_CustomersWarehouses`;
-    if (options?.customerId) {
-      countQuery += ` WHERE CustomerID = '${options.customerId}'`;
+    if (conditions.length > 0) {
+      countQuery += ` WHERE ${conditions.join(' AND ')}`;
     }
 
     const [data, countResult] = await Promise.all([

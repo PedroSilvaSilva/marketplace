@@ -7,211 +7,138 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// ============================================
-// UTILIZADORES
-// ============================================
-
 model User {
-  id        String   @id @default(uuid())
-  email     String   @unique
-  password  String
-  userType  UserType @default(USER)
-  status    UserStatus @default(INACTIVE)
-  
-  // Controlo de activação
-  isEmailVerified Boolean @default(false)
-  emailVerificationToken String? @unique
+  id                       String               @id @default(uuid())
+  email                    String               @unique
+  password                 String
+  userType                 UserType             @default(USER)
+  status                   UserStatus           @default(INACTIVE)
+  isEmailVerified          Boolean              @default(false)
+  emailVerificationToken   String?              @unique
   emailVerificationExpires DateTime?
-  
-  // MFA (Multi-Factor Authentication)
-  mfaEnabled Boolean @default(false)
-  mfaMethod  MFAMethod?
-  mfaSecret  String?
-  backupCodes String[] @default([])
-  
-  // Reset de password
-  resetPasswordToken String? @unique
-  resetPasswordExpires DateTime?
-  
-  // Timestamps
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  lastLoginAt DateTime?
-  
-  // Relações
-  profile       Profile?
-  sessions      Session[]
-  loginHistory  LoginHistory[]
-  auditLogs     AuditLog[]
-  organizations OrganizationMember[]
-  
+  mfaEnabled               Boolean              @default(false)
+  mfaMethod                MFAMethod?
+  mfaSecret                String?
+  backupCodes              String[]             @default([])
+  resetPasswordToken       String?              @unique
+  resetPasswordExpires     DateTime?
+  createdAt                DateTime             @default(now())
+  updatedAt                DateTime             @updatedAt
+  lastLoginAt              DateTime?
+  auditLogs                AuditLog[]
+  loginHistory             LoginHistory[]
+  organizations            OrganizationMember[]
+  profile                  Profile?
+  sessions                 Session[]
+
   @@index([email])
   @@index([status])
   @@index([userType])
   @@map("users")
 }
 
-// ============================================
-// PERFIL DO UTILIZADOR
-// ============================================
-
 model Profile {
-  id     String @id @default(uuid())
-  userId String @unique
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  // Informações pessoais
-  firstName  String?
-  lastName   String?
-  phone      String?
-  avatar     String?
-  birthDate  DateTime?
-  
-  // Morada
-  address    String?
-  city       String?
-  state      String?
-  country    String?
-  postalCode String?
-  
-  // Informações profissionais/empresa (para PARCERIA, CLIENTE)
-  companyName String?
-  companyVat  String?
+  id             String    @id @default(uuid())
+  userId         String    @unique
+  firstName      String?
+  lastName       String?
+  phone          String?
+  avatar         String?
+  birthDate      DateTime?
+  address        String?
+  city           String?
+  state          String?
+  country        String?
+  postalCode     String?
+  companyName    String?
+  companyVat     String?
   companyAddress String?
-  jobTitle    String?
-  department  String?
-  
-  // Informações técnicas (para DEV, TECNICO)
-  skills      String[] @default([])
-  certifications String[] @default([])
+  jobTitle       String?
+  department     String?
+  skills         String[]  @default([])
+  certifications String[]  @default([])
   specialization String?
-  
-  // Informações de licenças (para LICENCAS)
-  licenseNumber String?
-  licenseExpiry DateTime?
-  licenseType   String?
-  
-  // Preferências
-  language    String @default("pt")
-  timezone    String @default("Europe/Lisbon")
-  notifications Boolean @default(true)
-  
-  // Metadata adicional (JSON flexível para campos específicos)
-  metadata    Json?
-  
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  
+  licenseNumber  String?
+  licenseExpiry  DateTime?
+  licenseType    String?
+  language       String    @default("pt")
+  timezone       String    @default("Europe/Lisbon")
+  notifications  Boolean   @default(true)
+  metadata       Json?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   @@index([userId])
   @@map("profiles")
 }
 
-// ============================================
-// SESSÕES
-// ============================================
-
 model Session {
-  id        String   @id @default(uuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  // Token e identificação
-  token     String   @unique
-  refreshToken String? @unique
-  
-  // Informações da sessão
-  ipAddress String
-  userAgent String?
-  device    String?
-  browser   String?
-  os        String?
-  
-  // Localização (baseado em IP)
-  country   String?
-  city      String?
-  latitude  Float?
-  longitude Float?
-  
-  // Status
+  id           String       @id @default(uuid())
+  userId       String
+  token        String       @unique
+  refreshToken String?      @unique
+  ipAddress    String
+  userAgent    String?
+  device       String?
+  browser      String?
+  os           String?
+  country      String?
+  city         String?
+  latitude     Float?
+  longitude    Float?
   onlineStatus OnlineStatus @default(ONLINE)
-  isActive  Boolean @default(true)
-  
-  // Timestamps
-  lastActivity DateTime @default(now())
-  expiresAt DateTime
-  createdAt DateTime @default(now())
-  
+  isActive     Boolean      @default(true)
+  lastActivity DateTime     @default(now())
+  expiresAt    DateTime
+  createdAt    DateTime     @default(now())
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   @@index([userId])
   @@index([token])
   @@index([isActive])
   @@map("sessions")
 }
 
-// ============================================
-// HISTÓRICO DE LOGIN
-// ============================================
-
 model LoginHistory {
-  id        String   @id @default(uuid())
+  id        String      @id @default(uuid())
   userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  // Resultado do login
   result    LoginResult
   reason    String?
-  
-  // Informações do login
   ipAddress String
   userAgent String?
   device    String?
   browser   String?
   os        String?
-  
-  // Localização
   country   String?
   city      String?
   latitude  Float?
   longitude Float?
-  
-  // MFA
-  mfaUsed   Boolean @default(false)
+  mfaUsed   Boolean     @default(false)
   mfaMethod MFAMethod?
-  
-  // Timestamp
-  createdAt DateTime @default(now())
-  
+  createdAt DateTime    @default(now())
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   @@index([userId])
   @@index([createdAt])
   @@index([result])
   @@map("login_history")
 }
 
-// ============================================
-// AUDITORIA E LOGS
-// ============================================
-
 model AuditLog {
-  id        String   @id @default(uuid())
-  userId    String?
-  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
-  
-  // Acção
-  action    AuditAction
-  entity    String   // Ex: "User", "Payment", "License"
-  entityId  String?
-  
-  // Detalhes
+  id          String      @id @default(uuid())
+  userId      String?
+  action      AuditAction
+  entity      String
+  entityId    String?
   description String
-  changes   Json?    // Antes/Depois das alterações
-  metadata  Json?    // Informações adicionais
-  
-  // Contexto
-  ipAddress String?
-  userAgent String?
-  
-  // Timestamp
-  createdAt DateTime @default(now())
-  
+  changes     Json?
+  metadata    Json?
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime    @default(now())
+  user        User?       @relation(fields: [userId], references: [id])
+
   @@index([userId])
   @@index([action])
   @@index([entity])
@@ -219,49 +146,36 @@ model AuditLog {
   @@map("audit_logs")
 }
 
-// ============================================
-// ORGANIZAÇÕES E MEMBROS
-// ============================================
-
 model Organization {
-  id          String   @id @default(uuid())
-  name        String
-  slug        String   @unique
-  description String?
-  type        OrganizationType @default(MARKETPLACE)
-  
-  // Contactos
-  email       String
-  phone       String?
-  website     String?
-  logoUrl     String?
-  
-  // Status
-  isActive    Boolean  @default(true)
-  deletedAt   DateTime?
-  
-  // Settings e metadata
-  settings    Json?
-  metadata    Json?
-  
-  // Timestamps
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  
-  // Relations
-  members              OrganizationMember[]
-  providerConfig       ProviderConfig?
-  dataSourceConfig     DataSourceConfig?
-  clientConnections    ClientProviderConnection[] @relation("ClientConnections")
-  providerConnections  ClientProviderConnection[] @relation("ProviderConnections")
-  syncArticles         SyncArticle[]
-  syncedArticles       SyncedArticle[]
-  syncJobs             SyncJob[]
-  syncErrorLogs        SyncErrorLog[]
-  syncConfigurations   SyncConfiguration[]
-  syncExecutionLogs    SyncExecutionLog[]
+  id                    String                      @id @default(uuid())
+  name                  String
+  slug                  String                      @unique
+  description           String?
+  settings              Json?
+  createdAt             DateTime                    @default(now())
+  updatedAt             DateTime                    @updatedAt
+  deletedAt             DateTime?
+  email                 String
+  isActive              Boolean                     @default(true)
+  logoUrl               String?
+  metadata              Json?
+  phone                 String?
+  type                  OrganizationType            @default(MARKETPLACE)
+  website               String?
   articleWarehouseCache ArticleWarehouseSyncCache[]
-  
+  clientConnections     ClientProviderConnection[]  @relation("ClientConnections")
+  providerConnections   ClientProviderConnection[]  @relation("ProviderConnections")
+  dataSourceConfig      DataSourceConfig?
+  notificationSettings  NotificationSettings?
+  members               OrganizationMember[]
+  providerConfig        ProviderConfig?
+  syncArticles          SyncArticle[]
+  syncConfigurations    SyncConfiguration[]
+  syncErrorLogs         SyncErrorLog[]
+  syncExecutionLogs     SyncExecutionLog[]
+  syncJobs              SyncJob[]
+  syncedArticles        SyncedArticle[]
+
   @@index([slug])
   @@index([type])
   @@index([isActive])
@@ -269,27 +183,21 @@ model Organization {
 }
 
 model OrganizationMember {
-  id             String   @id @default(uuid())
-  organizationId String
-  userId         String
-  role           OrganizationRole @default(MEMBER)
-  
-  // Invite system
-  invitedBy      String?
-  inviteToken    String?   @unique
-  inviteExpires  DateTime?
+  id               String           @id @default(uuid())
+  organizationId   String
+  userId           String
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
   inviteAcceptedAt DateTime?
-  
-  // Status
-  isActive       Boolean   @default(true)
-  joinedAt       DateTime  @default(now())
-  
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-  
+  inviteExpires    DateTime?
+  inviteToken      String?          @unique
+  invitedBy        String?
+  isActive         Boolean          @default(true)
+  joinedAt         DateTime         @default(now())
+  role             OrganizationRole @default(MEMBER)
+  organization     Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user             User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   @@unique([organizationId, userId])
   @@index([organizationId])
   @@index([userId])
@@ -297,121 +205,75 @@ model OrganizationMember {
   @@map("organization_members")
 }
 
-// ============================================
-// PROVIDER CONFIGURATIONS
-// ============================================
-
 model ProviderConfig {
-  id              String   @id @default(uuid())
-  organizationId  String   @unique
-  
-  // API Configuration
-  apiUrl          String
-  apiKey          String?  @db.Text // Encrypted
-  apiSecret       String?  @db.Text // Encrypted
-  clientId        String?
-  clientSecret    String?  @db.Text // Encrypted
-  
-  // Authentication
-  authType        String?  // "API_KEY", "OAUTH2", "BASIC", "BEARER"
-  authEndpoint    String?
-  tokenEndpoint   String?
-  refreshToken    String?  @db.Text // Encrypted
-  tokenExpiresAt  DateTime?
-  
-  // Webhooks
-  webhookUrl      String?
-  webhookSecret   String?  @db.Text // Encrypted
-  webhookEvents   String[] @default([])
-  
-  // Rate Limiting
-  rateLimit       Int?     @default(60) // requests per minute
-  rateLimitWindow Int?     @default(60) // seconds
-  
-  // Retry Configuration
-  maxRetries      Int?     @default(3)
-  retryDelay      Int?     @default(1000) // milliseconds
-  
-  // Field Mappings (JSON)
-  fieldMappings   Json?    // Map local fields to provider fields
-  
-  // Custom Settings
-  settings        Json?    // Provider-specific configs
-  metadata        Json?    // Additional data
-  
-  // Status
-  isActive        Boolean  @default(true)
-  lastSyncAt      DateTime?
-  lastErrorAt     DateTime?
-  lastError       String?
-  
-  // Timestamps
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  
-  // Relations
-  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  syncArticles    SyncArticle[]
-  syncedArticles  SyncedArticle[]
-  syncJobs        SyncJob[]
-  syncErrorLogs   SyncErrorLog[]
+  id                 String              @id @default(uuid())
+  organizationId     String              @unique
+  apiUrl             String
+  apiKey             String?
+  apiSecret          String?
+  clientId           String?
+  clientSecret       String?
+  authType           String?
+  authEndpoint       String?
+  tokenEndpoint      String?
+  refreshToken       String?
+  tokenExpiresAt     DateTime?
+  webhookUrl         String?
+  webhookSecret      String?
+  webhookEvents      String[]            @default([])
+  rateLimit          Int?                @default(60)
+  rateLimitWindow    Int?                @default(60)
+  maxRetries         Int?                @default(3)
+  retryDelay         Int?                @default(1000)
+  fieldMappings      Json?
+  settings           Json?
+  metadata           Json?
+  isActive           Boolean             @default(true)
+  lastSyncAt         DateTime?
+  lastErrorAt        DateTime?
+  lastError          String?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  organization       Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  syncArticles       SyncArticle[]
   syncConfigurations SyncConfiguration[]
+  syncErrorLogs      SyncErrorLog[]
   syncExecutionLogs  SyncExecutionLog[]
-  
+  syncJobs           SyncJob[]
+  syncedArticles     SyncedArticle[]
+
   @@index([organizationId])
   @@index([isActive])
   @@map("provider_configs")
 }
 
-// ============================================
-// CLIENT-PROVIDER CONNECTIONS
-// ============================================
-
 model ClientProviderConnection {
-  id              String   @id @default(uuid())
-  
-  // Organizations
-  clientOrgId     String
-  providerOrgId   String
-  
-  // Provider-specific identifiers
-  merchantId      String?  // ID do cliente no marketplace
-  storeId         String?  // ID da loja
-  sellerId        String?  // ID do vendedor
-  accountId       String?  // ID genérico da conta
-  
-  // Credentials (specific for this client-provider pair)
-  credentials     Json?    // Client-specific credentials
-  
-  // Configuration
-  settings        Json?    // Connection-specific settings
-  syncSettings    Json?    // Sync preferences (products, orders, stock)
-  
-  // Status
-  isActive        Boolean  @default(true)
-  isVerified      Boolean  @default(false)
-  
-  // Sync Status
-  lastSyncAt      DateTime?
-  lastSyncStatus  String?  // "SUCCESS", "FAILED", "PARTIAL"
-  lastSyncError   String?
-  syncFrequency   Int?     @default(3600) // seconds
-  
-  // Statistics
-  totalOrders     Int      @default(0)
-  totalProducts   Int      @default(0)
-  totalRevenue    Float    @default(0)
-  
-  // Timestamps
-  connectedAt     DateTime @default(now())
-  disconnectedAt  DateTime?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  
-  // Relations
-  clientOrg       Organization @relation("ClientConnections", fields: [clientOrgId], references: [id], onDelete: Cascade)
-  providerOrg     Organization @relation("ProviderConnections", fields: [providerOrgId], references: [id], onDelete: Cascade)
-  
+  id             String       @id @default(uuid())
+  clientOrgId    String
+  providerOrgId  String
+  merchantId     String?
+  storeId        String?
+  sellerId       String?
+  accountId      String?
+  credentials    Json?
+  settings       Json?
+  syncSettings   Json?
+  isActive       Boolean      @default(true)
+  isVerified     Boolean      @default(false)
+  lastSyncAt     DateTime?
+  lastSyncStatus String?
+  lastSyncError  String?
+  syncFrequency  Int?         @default(3600)
+  totalOrders    Int          @default(0)
+  totalProducts  Int          @default(0)
+  totalRevenue   Float        @default(0)
+  connectedAt    DateTime     @default(now())
+  disconnectedAt DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  clientOrg      Organization @relation("ClientConnections", fields: [clientOrgId], references: [id], onDelete: Cascade)
+  providerOrg    Organization @relation("ProviderConnections", fields: [providerOrgId], references: [id], onDelete: Cascade)
+
   @@unique([clientOrgId, providerOrgId])
   @@index([clientOrgId])
   @@index([providerOrgId])
@@ -419,61 +281,308 @@ model ClientProviderConnection {
   @@map("client_provider_connections")
 }
 
-// ============================================
-// DATA SOURCE CONFIGURATIONS
-// ============================================
-
 model DataSourceConfig {
-  id              String   @id @default(uuid())
-  organizationId  String   @unique
-  
-  // Data Source Type
-  sourceType      DataSourceType @default(SQL_SERVER)
-  
-  // SQL Server Configuration
-  sqlHost         String?
-  sqlInstance     String?
-  sqlPort         Int?
-  sqlDatabase     String?
-  sqlUser         String?
-  sqlPassword     String?  // Encrypted
-  
-  // Connection Options
-  connectionTimeout Int?     @default(15000)  // milliseconds
-  requestTimeout    Int?     @default(30000)  // milliseconds
-  poolMax           Int?     @default(10)
-  poolMin           Int?     @default(0)
-  
-  // Table/View Mappings
-  productView     String?  // Ex: "u_csw_tips4y_Articles"
-  stockView       String?  // Ex: "u_csw_tips4y_ArticleWarehouse"
-  customerView    String?  // Ex: "u_csw_tips4y_Customers"
-  orderView       String?  // Ex: "u_csw_tips4y_Orders"
-  discountGroupView String?  // Ex: "u_csw_tips4y_ArticleDiscountGroup"
-  discountSubGroupView String?  // Ex: "u_csw_tips4y_ArticleDiscountSubGroup"
-  
-  // Field Mappings (how SQL fields map to our system)
-  fieldMappings   Json?    // Custom field mappings
-  
-  // Settings
-  settings        Json?    // Additional settings
-  isActive        Boolean  @default(true)
-  
-  // Test Connection
-  lastTestAt      DateTime?
-  lastTestStatus  String?  // "SUCCESS", "FAILED"
-  lastTestError   String?
-  
-  // Timestamps
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  
-  // Relations
-  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  
+  id                   String         @id @default(uuid())
+  organizationId       String         @unique
+  sourceType           DataSourceType @default(SQL_SERVER)
+  sqlHost              String?
+  sqlInstance          String?
+  sqlPort              Int?
+  sqlDatabase          String?
+  sqlUser              String?
+  sqlPassword          String?
+  connectionTimeout    Int?           @default(15000)
+  requestTimeout       Int?           @default(30000)
+  poolMax              Int?           @default(10)
+  poolMin              Int?           @default(0)
+  productView          String?
+  stockView            String?
+  customerView         String?
+  orderView            String?
+  fieldMappings        Json?
+  settings             Json?
+  isActive             Boolean        @default(true)
+  lastTestAt           DateTime?
+  lastTestStatus       String?
+  lastTestError        String?
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
+  discountGroupView    String?
+  discountSubGroupView String?
+  organization         Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
   @@index([organizationId])
   @@index([isActive])
   @@map("data_source_configs")
+}
+
+model Customer {
+  id          String    @id @default(uuid())
+  companyName String
+  taxId       String    @unique
+  email       String
+  phone       String?
+  address     String?
+  city        String?
+  country     String?
+  status      String    @default("active")
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  @@index([email])
+  @@index([taxId])
+  @@map("customers")
+}
+
+model Integration {
+  id        String    @id @default(uuid())
+  name      String
+  type      String
+  config    Json
+  apiKey    String?
+  isActive  Boolean   @default(true)
+  lastSync  DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([type])
+  @@index([isActive])
+  @@map("integrations")
+}
+
+model SyncArticle {
+  id                       String         @id @default(uuid())
+  organizationId           String
+  providerConfigId         String
+  sourceArticleId          String?
+  brandId                  String
+  articleDiscountGroupCode String
+  partNumber               String
+  discountSubGroupCode     String
+  internalPartNumber       String
+  categoryCode             String
+  attributeId              String?
+  active                   Boolean        @default(true)
+  availability             Boolean        @default(true)
+  service                  Boolean        @default(false)
+  sort                     Int            @default(0)
+  picture                  String?
+  articleName              String
+  articleDescription       String
+  daysAsNew                Int            @default(0)
+  tag                      String?
+  reservedForFutureUse     String?
+  status                   SyncStatus     @default(PENDING)
+  errorMessage             String?
+  errorDetails             Json?
+  attempts                 Int            @default(0)
+  lastAttemptAt            DateTime?
+  sentAt                   DateTime?
+  createdAt                DateTime       @default(now())
+  updatedAt                DateTime       @updatedAt
+  organization             Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  providerConfig           ProviderConfig @relation(fields: [providerConfigId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([providerConfigId])
+  @@index([status])
+  @@index([brandId])
+  @@index([partNumber])
+  @@map("sync_articles")
+}
+
+model SyncedArticle {
+  id               String         @id @default(uuid())
+  organizationId   String
+  providerConfigId String
+  brandId          Int
+  partNumber       String
+  syncedAt         DateTime       @default(now())
+  createdAt        DateTime       @default(now())
+  organization     Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  providerConfig   ProviderConfig @relation(fields: [providerConfigId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, providerConfigId, brandId, partNumber], name: "synced_articles_unique")
+  @@index([organizationId, providerConfigId])
+  @@index([brandId, partNumber])
+  @@map("synced_articles")
+}
+
+model SyncJob {
+  id                     String         @id @default(uuid())
+  organizationId         String
+  providerConfigId       String
+  type                   SyncJobType
+  status                 SyncJobStatus  @default(PENDING)
+  totalRecords           Int            @default(0)
+  processedRecords       Int            @default(0)
+  successRecords         Int            @default(0)
+  errorRecords           Int            @default(0)
+  batchSize              Int            @default(1000)
+  currentBatch           Int            @default(0)
+  filters                Json?
+  progress               Float          @default(0)
+  estimatedTimeRemaining Int?
+  errorMessage           String?
+  errorDetails           Json?
+  retryCount             Int            @default(0)
+  maxRetries             Int            @default(3)
+  startedAt              DateTime?
+  completedAt            DateTime?
+  createdAt              DateTime       @default(now())
+  updatedAt              DateTime       @updatedAt
+  errorLogs              SyncErrorLog[]
+  organization           Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  providerConfig         ProviderConfig @relation(fields: [providerConfigId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([providerConfigId])
+  @@index([status])
+  @@index([type])
+  @@index([createdAt])
+  @@map("sync_jobs")
+}
+
+model SyncErrorLog {
+  id               String         @id @default(uuid())
+  organizationId   String
+  providerConfigId String
+  syncJobId        String?
+  operation        String
+  entityType       String
+  errorMessage     String
+  errorStack       String?
+  errorCode        String?
+  context          Json
+  createdAt        DateTime       @default(now())
+  organization     Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  providerConfig   ProviderConfig @relation(fields: [providerConfigId], references: [id], onDelete: Cascade)
+  syncJob          SyncJob?       @relation(fields: [syncJobId], references: [id])
+
+  @@index([organizationId])
+  @@index([providerConfigId])
+  @@index([syncJobId])
+  @@index([operation])
+  @@index([entityType])
+  @@index([createdAt])
+  @@map("sync_error_logs")
+}
+
+model SyncConfiguration {
+  id               String         @id @default(uuid())
+  organizationId   String
+  providerConfigId String
+  syncType         SyncType
+  enabled          Boolean        @default(true)
+  intervalSeconds  Int            @default(300)
+  lastSyncAt       DateTime?
+  lastSuccessAt    DateTime?
+  lastErrorAt      DateTime?
+  lastError        String?
+  options          Json?          @default("{}")
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  organization     Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  providerConfig   ProviderConfig @relation(fields: [providerConfigId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, providerConfigId, syncType])
+  @@index([organizationId])
+  @@index([providerConfigId])
+  @@index([enabled])
+  @@index([lastSyncAt])
+  @@map("sync_configurations")
+}
+
+model SyncExecutionLog {
+  id                  String              @id @default(uuid())
+  syncConfigurationId String?
+  organizationId      String
+  providerConfigId    String
+  syncType            SyncType
+  status              SyncExecutionStatus
+  startedAt           DateTime            @default(now())
+  completedAt         DateTime?
+  duration            Int?
+  totalFetched        Int?                @default(0)
+  totalProcessed      Int?                @default(0)
+  totalSucceeded      Int?                @default(0)
+  totalFailed         Int?                @default(0)
+  totalSkipped        Int?                @default(0)
+  errorMessage        String?
+  errorStack          String?
+  metadata            Json?               @default("{}")
+  organization        Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  providerConfig      ProviderConfig      @relation(fields: [providerConfigId], references: [id], onDelete: Cascade)
+
+  @@index([syncConfigurationId])
+  @@index([organizationId])
+  @@index([providerConfigId])
+  @@index([syncType])
+  @@index([status])
+  @@index([startedAt])
+  @@index([completedAt])
+  @@map("sync_execution_logs")
+}
+
+model ArticleWarehouseSyncCache {
+  id             String       @id @default(uuid())
+  organizationId String
+  brandId        String
+  partNumber     String
+  warehouseCode  String
+  dataHash       String
+  lastSyncedAt   DateTime     @default(now())
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, brandId, partNumber, warehouseCode])
+  @@index([organizationId])
+  @@index([lastSyncedAt])
+  @@map("article_warehouse_sync_cache")
+}
+
+model ErrorNotificationLog {
+  id                       String       @id @default(uuid())
+  context                  ErrorContext
+  method                   String
+  errorMessage             String
+  errorStack               String?
+  internalPartNumber       String?
+  orderNumber              String?
+  articleDiscountGroupCode String?
+  discountSubGroupCode     String?
+  customerId               String?
+  additionalInfo           Json?
+  emailSent                Boolean      @default(false)
+  emailSentAt              DateTime?
+  emailRecipients          String[]     @default([])
+  emailError               String?
+  createdAt                DateTime     @default(now())
+
+  @@index([context])
+  @@index([method])
+  @@index([createdAt])
+  @@index([emailSent])
+  @@index([internalPartNumber])
+  @@index([orderNumber])
+  @@index([customerId])
+  @@map("error_notification_logs")
+}
+
+model NotificationSettings {
+  id              String        @id @default(uuid())
+  organizationId  String?       @unique
+  notifyOnSuccess Boolean       @default(false)
+  notifyOnError   Boolean       @default(true)
+  notifyOnPartial Boolean       @default(true)
+  emailRecipients String[]      @default([])
+  syncTypes       String[]      @default([])
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  organization    Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@map("notification_settings")
 }
 
 enum DataSourceType {
@@ -485,107 +594,6 @@ enum DataSourceType {
   GRAPHQL
   FILE_STORAGE
 }
-
-// ============================================
-// BUSINESS MODULES
-// ============================================
-
-// Customer Management
-model Customer {
-  id          String   @id @default(uuid())
-  companyName String
-  taxId       String   @unique
-  email       String
-  phone       String?
-  address     String?
-  city        String?
-  country     String?
-  status      String   @default("active")
-  
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  deletedAt   DateTime?
-
-  @@index([email])
-  @@index([taxId])
-  @@map("customers")
-}
-
-// Integrations
-model Integration {
-  id          String   @id @default(uuid())
-  name        String
-  type        String
-  config      Json
-  apiKey      String?
-  isActive    Boolean  @default(true)
-  lastSync    DateTime?
-  
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  @@index([type])
-  @@index([isActive])
-  @@map("integrations")
-}
-
-// ============================================
-// SYNC ARTICLES - Staging para envio
-// ============================================
-
-model SyncArticle {
-  id          String   @id @default(uuid())
-  
-  // Relações
-  organizationId    String
-  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  providerConfigId  String
-  providerConfig    ProviderConfig @relation(fields: [providerConfigId], references: [id], onDelete: Cascade)
-  
-  // Identificação do artigo source
-  sourceArticleId   String?  // ID do artigo no sistema origem (SQL Server)
-  
-  // 17 campos do CSV TypsForYou
-  brandId                    String
-  articleDiscountGroupCode   String
-  partNumber                 String
-  discountSubGroupCode       String
-  internalPartNumber         String
-  categoryCode               String
-  attributeId                String?
-  active                     Boolean  @default(true)
-  availability               Boolean  @default(true)
-  service                    Boolean  @default(false)
-  sort                       Int      @default(0)
-  picture                    String?
-  articleName                String
-  articleDescription         String
-  daysAsNew                  Int      @default(0)
-  tag                        String?
-  reservedForFutureUse       String?
-  
-  // Status e controle
-  status          SyncStatus   @default(PENDING)
-  errorMessage    String?
-  errorDetails    Json?
-  attempts        Int          @default(0)
-  lastAttemptAt   DateTime?
-  sentAt          DateTime?
-  
-  createdAt       DateTime     @default(now())
-  updatedAt       DateTime     @updatedAt
-
-  @@index([organizationId])
-  @@index([providerConfigId])
-  @@index([status])
-  @@index([brandId])
-  @@index([partNumber])
-  @@map("sync_articles")
-}
-
-// ============================================
-// ENUMS
-// ============================================
 
 enum UserType {
   ADMIN
@@ -655,86 +663,12 @@ enum AuditAction {
 }
 
 enum SyncStatus {
-  PENDING      // Aguardando envio
-  VALIDATED    // Validado e pronto para envio
-  SENT         // Enviado com sucesso
-  ERROR        // Erro no envio
-  REJECTED     // Rejeitado pela API (BrandID inválido, etc)
-  SKIPPED      // Pulado (falta campos obrigatórios)
-}
-
-// ============================================
-// CACHE DE ARTIGOS SINCRONIZADOS
-// ============================================
-
-model SyncedArticle {
-  id               String   @id @default(uuid())
-  organizationId   String
-  providerConfigId String
-  brandId          Int
-  partNumber       String
-  syncedAt         DateTime @default(now())
-  createdAt        DateTime @default(now())
-  
-  // Relations
-  organization     Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  providerConfig   ProviderConfig @relation(fields: [providerConfigId], references: [id], onDelete: Cascade)
-  
-  @@unique([organizationId, providerConfigId, brandId, partNumber], name: "synced_articles_unique")
-  @@index([organizationId, providerConfigId])
-  @@index([brandId, partNumber])
-  @@map("synced_articles")
-}
-
-// ============================================
-// SYNC JOBS - Batch Processing
-// ============================================
-
-model SyncJob {
-  id                    String   @id @default(uuid())
-  organizationId        String
-  providerConfigId      String
-  type                  SyncJobType
-  status                SyncJobStatus @default(PENDING)
-  
-  // Batch configuration
-  totalRecords          Int      @default(0)
-  processedRecords      Int      @default(0)
-  successRecords        Int      @default(0)
-  errorRecords          Int      @default(0)
-  batchSize             Int      @default(1000)
-  currentBatch          Int      @default(0)
-  
-  // Filters applied
-  filters               Json?
-  
-  // Progress tracking
-  progress              Float    @default(0) // 0 to 100
-  estimatedTimeRemaining Int?    // seconds
-  
-  // Error handling
-  errorMessage          String?
-  errorDetails          Json?
-  retryCount            Int      @default(0)
-  maxRetries            Int      @default(3)
-  
-  // Timestamps
-  startedAt             DateTime?
-  completedAt           DateTime?
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
-  
-  // Relations
-  organization          Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  providerConfig        ProviderConfig @relation(fields: [providerConfigId], references: [id], onDelete: Cascade)
-  errorLogs             SyncErrorLog[] // Relation to error logs
-  
-  @@index([organizationId])
-  @@index([providerConfigId])
-  @@index([status])
-  @@index([type])
-  @@index([createdAt])
-  @@map("sync_jobs")
+  PENDING
+  VALIDATED
+  SENT
+  ERROR
+  REJECTED
+  SKIPPED
 }
 
 enum SyncJobType {
@@ -756,85 +690,6 @@ enum SyncJobStatus {
   CANCELLED
 }
 
-// ============================================
-// SYNC ERROR LOGS
-// ============================================
-
-model SyncErrorLog {
-  id                String   @id @default(uuid())
-  organizationId    String
-  providerConfigId  String
-  syncJobId         String?
-  
-  // Error classification
-  operation         String   // e.g., 'ARTICLE_SYNC_CHUNK', 'API_UPLOAD', 'CSV_GENERATION'
-  entityType        String   // 'ARTICLE', 'ARTICLE_WAREHOUSE', 'CUSTOMER', etc.
-  
-  // Error details
-  errorMessage      String
-  errorStack        String?  @db.Text
-  errorCode         String?
-  
-  // Context (stores JSON with chunk info, data snapshot, API responses, etc.)
-  context           Json
-  
-  // Timestamps
-  createdAt         DateTime @default(now())
-  
-  // Relations
-  organization      Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  providerConfig    ProviderConfig @relation(fields: [providerConfigId], references: [id], onDelete: Cascade)
-  syncJob           SyncJob?       @relation(fields: [syncJobId], references: [id], onDelete: SetNull)
-  
-  @@index([organizationId])
-  @@index([providerConfigId])
-  @@index([syncJobId])
-  @@index([operation])
-  @@index([entityType])
-  @@index([createdAt])
-  @@map("sync_error_logs")
-}
-// ============================================
-// SYNC CONFIGURATION (CRON/SCHEDULED SYNCS)
-// ============================================
-
-model SyncConfiguration {
-  id                String   @id @default(uuid())
-  organizationId    String
-  providerConfigId  String
-  
-  // Sync type (what to sync)
-  syncType          SyncType
-  
-  // Schedule configuration
-  enabled           Boolean  @default(true)
-  intervalSeconds   Int      @default(300) // Default: 5 minutes
-  
-  // Tracking
-  lastSyncAt        DateTime?
-  lastSuccessAt     DateTime?
-  lastErrorAt       DateTime?
-  lastError         String?
-  
-  // Options (JSON with sync-specific settings)
-  options           Json?    @default("{}")
-  
-  // Timestamps
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-  
-  // Relations
-  organization      Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  providerConfig    ProviderConfig @relation(fields: [providerConfigId], references: [id], onDelete: Cascade)
-  
-  @@unique([organizationId, providerConfigId, syncType])
-  @@index([organizationId])
-  @@index([providerConfigId])
-  @@index([enabled])
-  @@index([lastSyncAt])
-  @@map("sync_configurations")
-}
-
 enum SyncType {
   DISCOUNT_GROUPS
   DISCOUNT_SUBGROUPS
@@ -843,89 +698,24 @@ enum SyncType {
   CUSTOMERS
   CUSTOMER_DISCOUNT_GROUPS
   CUSTOMER_WAREHOUSES
-  ORDERS              // Send integrated orders TO TypsForYou
-  ORDER_FETCH         // Fetch orders FROM TypsForYou and process
-}
-
-// ============================================
-// SYNC EXECUTION LOGS
-// ============================================
-
-model SyncExecutionLog {
-  id                    String   @id @default(uuid())
-  
-  // Reference
-  syncConfigurationId   String?
-  organizationId        String
-  providerConfigId      String
-  syncType              SyncType
-  
-  // Execution details
-  status                SyncExecutionStatus
-  startedAt             DateTime @default(now())
-  completedAt           DateTime?
-  duration              Int?     // Duration in milliseconds
-  
-  // Results
-  totalFetched          Int?     @default(0)
-  totalProcessed        Int?     @default(0)
-  totalSucceeded        Int?     @default(0)
-  totalFailed           Int?     @default(0)
-  totalSkipped          Int?     @default(0)
-  
-  // Error details
-  errorMessage          String?
-  errorStack            String?
-  
-  // Additional metadata
-  metadata              Json?    @default("{}")
-  
-  // Relations
-  organization          Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  providerConfig        ProviderConfig @relation(fields: [providerConfigId], references: [id], onDelete: Cascade)
-  
-  @@index([syncConfigurationId])
-  @@index([organizationId])
-  @@index([providerConfigId])
-  @@index([syncType])
-  @@index([status])
-  @@index([startedAt])
-  @@index([completedAt])
-  @@map("sync_execution_logs")
-}
-
-// ============================================
-// ARTICLE WAREHOUSE SYNC CACHE
-// ============================================
-
-model ArticleWarehouseSyncCache {
-  id              String   @id @default(uuid())
-  organizationId  String
-  
-  // Article identification
-  brandId         String
-  partNumber      String
-  warehouseCode   String
-  
-  // Data hash for change detection (MD5 of all fields)
-  dataHash        String
-  
-  // Tracking
-  lastSyncedAt    DateTime @default(now())
-  createdAt       DateTime @default(now())
-  
-  // Relations
-  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  
-  @@unique([organizationId, brandId, partNumber, warehouseCode])
-  @@index([organizationId])
-  @@index([lastSyncedAt])
-  @@map("article_warehouse_sync_cache")
+  ORDERS
+  ORDER_FETCH
 }
 
 enum SyncExecutionStatus {
   RUNNING
   SUCCESS
   FAILED
-  PARTIAL // Some items succeeded, some failed
+  PARTIAL
+}
+
+enum ErrorContext {
+  articles
+  warehouse
+  orders
+  discountGroup
+  discountSubGroup
+  customers
+  customerDiscountGroup
+  customerWarehouse
 }

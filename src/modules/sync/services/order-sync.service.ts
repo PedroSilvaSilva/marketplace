@@ -1,6 +1,7 @@
 import { Typs4YouClient } from '../clients/typs4you.client';
 import logger from '@config/logger';
 import { AppError } from '@utils/errors';
+import { ErrorNotificationService } from '@services/error-notification.service';
 
 /**
  * Order Sync Service
@@ -59,6 +60,23 @@ export class OrderSyncService {
         orderId,
         error: errorMessage
       });
+
+      // Send error notification
+      await ErrorNotificationService.sendErrorNotification({
+        context: 'orders',
+        organizationId,
+        errorMessage: `Failed to fetch orders from TypsForYou: ${errorMessage}`,
+        errorDetails: {
+          providerConfigId,
+          orderId: orderId || 'all',
+          errorType: error instanceof Error ? error.name : 'Unknown'
+        },
+        stackTrace: error instanceof Error ? error.stack : undefined,
+        metadata: {
+          providerConfigId
+        }
+      });
+
       throw new AppError(`Failed to fetch orders: ${errorMessage}`, 500);
     }
   }

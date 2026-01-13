@@ -1,0 +1,13 @@
+# Ver últimos logs do servidor relacionados a ARTICLES
+# Execute este comando no PowerShell onde está rodando 'pnpm dev'
+
+# Se o servidor está rodando, pressione Ctrl+C e cole os últimos 100 linhas aqui
+# Ou se já tiver parado, mostre as últimas linhas que aparecem
+
+# Procure por estas linhas chave:
+# - [CronScheduler] Executing ARTICLES
+# - [ArticleScheduler] Starting sync
+# - Fetched X articles from SQL Server
+# - Articles sent successfully
+# - [ArticleScheduler] Sync failed
+# - [error]:

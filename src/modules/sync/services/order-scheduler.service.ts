@@ -6,6 +6,7 @@ import emailService from '@utils/email';
 import { config } from '@config/index';
 import prisma from '@config/database';
 import logger from '@config/logger';
+import { ErrorNotificationService } from '@services/error-notification.service';
 
 /**
  * Order Scheduler Service
@@ -128,6 +129,36 @@ export class OrderSchedulerService {
         notified: processResult.ordersNotified
       });
 
+      // Send error notification if there were skipped orders
+      if (processResult.ordersSkipped > 0) {
+        const ordersResponse = fetchResult.orders as any;
+        const ordersTable = ordersResponse?.Orders_Table || [];
+        const skippedOrderIDs = ordersTable
+          .slice(0, 20)
+          .map((order: any) => order.OrderID)
+          .filter(Boolean);
+
+        await ErrorNotificationService.sendErrorNotification({
+          context: 'orders',
+          organizationId,
+          errorMessage: `${processResult.ordersSkipped} orders skipped (likely duplicates) out of ${fetchResult.count} fetched`,
+          errorDetails: {
+            totalFetched: fetchResult.count,
+            processed: processResult.ordersProcessed,
+            skipped: processResult.ordersSkipped,
+            notified: processResult.ordersNotified,
+            totalLines: processResult.totalLines,
+            skippedOrderIDs
+          },
+          stackTrace: null,
+          metadata: {
+            syncConfigurationId: options?.syncConfigurationId,
+            providerConfigId,
+            executionLogId: logId
+          }
+        });
+      }
+
       // Update log with success results
       const executionStatus = 
         processResult.ordersProcessed > 0 && processResult.ordersSkipped === 0 
@@ -222,6 +253,25 @@ export class OrderSchedulerService {
           }
         });
       }
+
+      // Send critical error notification
+      await ErrorNotificationService.sendErrorNotification({
+        context: 'orders',
+        organizationId,
+        errorMessage: `Order fetch and processing failed critically: ${errorMessage}`,
+        errorDetails: {
+          providerConfigId,
+          syncConfigurationId: options?.syncConfigurationId,
+          errorType: error instanceof Error ? error.name : 'Unknown',
+          duration: Date.now() - startTime,
+          specificOrderId: options?.orderId
+        },
+        stackTrace: errorStack,
+        metadata: {
+          providerConfigId,
+          executionLogId: logId
+        }
+      });
 
       throw error;
     }

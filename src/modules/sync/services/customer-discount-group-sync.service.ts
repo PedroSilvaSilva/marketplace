@@ -2,6 +2,7 @@ import { SQLService } from '../../../services/sql.service';
 import { Typs4YouClient } from '../clients/typs4you.client';
 import logger from '../../../config/logger';
 import { AppError } from '../../../utils/errors';
+import { ErrorNotificationService } from '@services/error-notification.service';
 
 export class CustomerDiscountGroupSyncService {
   /**
@@ -132,6 +133,35 @@ export class CustomerDiscountGroupSyncService {
           errors: response.DataErrorsFound
         });
 
+        // Extract failed codes from errors
+        const errors = response.DataErrorsFound || [];
+        const failedCodes = errors
+          .map((err: any) => {
+            const match = err.Error_Message?.match(/DiscountGroupCode[:\s]+([A-Z0-9-]+)/i);
+            return match ? match[1] : null;
+          })
+          .filter((code: any): code is string => code !== null)
+          .slice(0, 20);
+
+        // Send error notification
+        await ErrorNotificationService.sendErrorNotification({
+          context: 'discountGroup',
+          organizationId,
+          errorMessage: `Customer discount groups sync failed: ${response.ExitMesssage || 'Unknown error'}`,
+          errorDetails: {
+            sent: csvResult.count,
+            loaded: loadedRecords,
+            failed: csvResult.count - loadedRecords,
+            exitCode,
+            errors: errors.slice(0, 10),
+            failedCodes
+          },
+          stackTrace: null,
+          metadata: {
+            providerConfigId
+          }
+        });
+
         throw new AppError(
           `Failed to upload customer discount groups: ${response.ExitMesssage || 'Unknown error'}. Errors: ${JSON.stringify(response.DataErrorsFound)}`,
           400
@@ -140,6 +170,24 @@ export class CustomerDiscountGroupSyncService {
 
     } catch (error: unknown) {
       logger.error('Failed to send customer discount groups to TypsForYou:', error);
+
+      // Send critical error notification
+      if (error instanceof Error && !error.message.includes('Failed to upload customer discount groups')) {
+        await ErrorNotificationService.sendErrorNotification({
+          context: 'discountGroup',
+          organizationId,
+          errorMessage: `Customer discount groups sync failed critically: ${error.message}`,
+          errorDetails: {
+            errorType: error.name,
+            providerConfigId
+          },
+          stackTrace: error.stack,
+          metadata: {
+            providerConfigId
+          }
+        });
+      }
+
       throw error;
     }
   }

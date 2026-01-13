@@ -5,6 +5,7 @@ import prisma from '@config/database';
 import logger from '@config/logger';
 import { config } from '@config/index';
 import crypto from 'crypto';
+import { ErrorNotificationService } from '@services/error-notification.service';
 
 /**
  * Article Warehouse Scheduler Service
@@ -68,9 +69,10 @@ export class ArticleWarehouseSchedulerService {
       logId = executionLog.id;
 
       // Fetch article warehouse data from SQL Server (all warehouses, we'll filter by hash)
+      // Use smaller limit to avoid memory issues
       const result = await SQLService.getArticleWarehouse(organizationId, {
         page: 1,
-        limit: 50000 // Large limit to get all
+        limit: 50000 // Reduced to prevent memory issues
         // No warehouseCode filter - get ALL warehouses
       });
 
@@ -95,23 +97,42 @@ export class ArticleWarehouseSchedulerService {
 
       logger.info('[ArticleWarehouseScheduler] Fetched records from SQL', { count: result.data.length });
 
-      // Get existing cache for this organization
-      const existingCache = await prisma.articleWarehouseSyncCache.findMany({
-        where: { organizationId },
-        select: {
-          brandId: true,
-          partNumber: true,
-          warehouseCode: true,
-          dataHash: true
-        }
-      });
-
-      // Build cache map for quick lookup
+      // Get existing cache for this organization (paginated to avoid memory issues)
+      const CACHE_PAGE_SIZE = 10000;
       const cacheMap = new Map<string, string>();
-      existingCache.forEach(item => {
-        const key = `${item.brandId}|${item.partNumber}|${item.warehouseCode}`;
-        cacheMap.set(key, item.dataHash);
-      });
+      let cacheOffset = 0;
+      let hasMoreCache = true;
+
+      logger.info('[ArticleWarehouseScheduler] Loading cache in chunks...');
+
+      while (hasMoreCache) {
+        const cacheChunk = await prisma.articleWarehouseSyncCache.findMany({
+          where: { organizationId },
+          select: {
+            brandId: true,
+            partNumber: true,
+            warehouseCode: true,
+            dataHash: true
+          },
+          take: CACHE_PAGE_SIZE,
+          skip: cacheOffset
+        });
+
+        if (cacheChunk.length === 0) {
+          hasMoreCache = false;
+        } else {
+          cacheChunk.forEach(item => {
+            const key = `${item.brandId}|${item.partNumber}|${item.warehouseCode}`;
+            cacheMap.set(key, item.dataHash);
+          });
+          cacheOffset += CACHE_PAGE_SIZE;
+          
+          // Force garbage collection hint
+          if (global.gc) {
+            global.gc();
+          }
+        }
+      }
 
       logger.info('[ArticleWarehouseScheduler] Loaded cache', { cacheSize: cacheMap.size });
 
@@ -136,7 +157,7 @@ export class ArticleWarehouseSchedulerService {
           recordsToSync.push(record);
           cacheUpdates.push({
             organizationId,
-            brandId: record.BrandId,
+            brandId: String(record.BrandId),
             partNumber: record.PartNumber,
             warehouseCode: record.WareHouseCode,
             dataHash: currentHash,
@@ -252,12 +273,72 @@ export class ArticleWarehouseSchedulerService {
               loaded: loadedRecords,
               errors: errors.slice(0, 3)
             });
+
+            // Extract failed InternalPartNumbers from batch
+            const failedPartNumbers = batch
+              .slice(0, 10) // First 10 failed items
+              .map(record => record.PartNumber)
+              .filter(Boolean);
+
+            // Send error notification for batch failure
+            await ErrorNotificationService.sendErrorNotification({
+              context: 'warehouse',
+              organizationId,
+              errorMessage: `Article warehouse batch ${batchNumber}/${totalBatches} failed: ${apiResponse.ExitMesssage || 'Unknown error'}`,
+              errorDetails: {
+                batchNumber,
+                totalBatches,
+                batchSize: batch.length,
+                loaded: loadedRecords,
+                failed: batch.length - loadedRecords,
+                exitCode: apiResponse.ExitCode,
+                errors: errors.slice(0, 5),
+                failedPartNumbers
+              },
+              stackTrace: null,
+              metadata: {
+                syncConfigurationId,
+                providerConfigId,
+                executionLogId: logId
+              }
+            });
+
             // Continue processing next batch instead of stopping
+          }
+
+          // Add small delay between batches to prevent overwhelming the system
+          if (batchNumber < totalBatches) {
+            await new Promise(resolve => setTimeout(resolve, 100));
+            
+            // Force garbage collection if available
+            if (global.gc) {
+              global.gc();
+            }
           }
         } catch (batchError) {
           logger.error(`[ArticleWarehouseScheduler] Batch ${batchNumber} failed`, {
             error: batchError instanceof Error ? batchError.message : String(batchError)
           });
+
+          // Send error notification for batch exception
+          await ErrorNotificationService.sendErrorNotification({
+            context: 'warehouse',
+            organizationId,
+            errorMessage: `Article warehouse batch ${batchNumber}/${totalBatches} threw exception: ${batchError instanceof Error ? batchError.message : String(batchError)}`,
+            errorDetails: {
+              batchNumber,
+              totalBatches,
+              batchSize: batch.length,
+              errorType: batchError instanceof Error ? batchError.name : 'Unknown'
+            },
+            stackTrace: batchError instanceof Error ? batchError.stack : null,
+            metadata: {
+              syncConfigurationId,
+              providerConfigId,
+              executionLogId: logId
+            }
+          });
+
           // Continue processing next batch
         }
       }
@@ -265,22 +346,35 @@ export class ArticleWarehouseSchedulerService {
       // Update cache for all processed records (regardless of API success)
       logger.info('[ArticleWarehouseScheduler] Updating cache', { updates: cacheUpdates.length });
       
-      for (const update of cacheUpdates) {
-        await prisma.articleWarehouseSyncCache.upsert({
-          where: {
-            organizationId_brandId_partNumber_warehouseCode: {
-              organizationId: update.organizationId,
-              brandId: update.brandId,
-              partNumber: update.partNumber,
-              warehouseCode: update.warehouseCode
-            }
-          },
-          update: {
-            dataHash: update.dataHash,
-            lastSyncedAt: update.lastSyncedAt
-          },
-          create: update
-        });
+      // Process cache updates in batches to avoid memory issues
+      const CACHE_UPDATE_BATCH_SIZE = 500;
+      for (let i = 0; i < cacheUpdates.length; i += CACHE_UPDATE_BATCH_SIZE) {
+        const updateBatch = cacheUpdates.slice(i, i + CACHE_UPDATE_BATCH_SIZE);
+        
+        await Promise.all(
+          updateBatch.map(update =>
+            prisma.articleWarehouseSyncCache.upsert({
+              where: {
+                organizationId_brandId_partNumber_warehouseCode: {
+                  organizationId: update.organizationId,
+                  brandId: update.brandId,
+                  partNumber: update.partNumber,
+                  warehouseCode: update.warehouseCode
+                }
+              },
+              update: {
+                dataHash: update.dataHash,
+                lastSyncedAt: update.lastSyncedAt
+              },
+              create: update
+            })
+          )
+        );
+
+        // Force garbage collection between cache update batches
+        if (global.gc && i + CACHE_UPDATE_BATCH_SIZE < cacheUpdates.length) {
+          global.gc();
+        }
       }
 
       // Update sync configuration
@@ -362,6 +456,27 @@ export class ArticleWarehouseSchedulerService {
           }
         });
       }
+
+      // Send critical error notification
+      const syncConfig = await prisma.syncConfiguration.findUnique({
+        where: { id: syncConfigurationId }
+      });
+
+      await ErrorNotificationService.sendErrorNotification({
+        context: 'warehouse',
+        organizationId: syncConfig?.organizationId || 'unknown',
+        errorMessage: `Article warehouse sync failed critically: ${errorMessage}`,
+        errorDetails: {
+          syncConfigurationId,
+          errorType: error instanceof Error ? error.name : 'Unknown',
+          duration: Date.now() - startTime
+        },
+        stackTrace: errorStack,
+        metadata: {
+          syncConfigurationId,
+          executionLogId: logId
+        }
+      });
 
       throw error;
     }

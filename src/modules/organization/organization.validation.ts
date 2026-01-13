@@ -15,12 +15,12 @@ export const createOrganizationSchema = z.object({
 
 export const updateOrganizationSchema = z.object({
   name: z.string().min(2).max(100).optional(),
-  description: z.string().max(500).optional(),
+  description: z.string().max(500).optional().nullable(),
   type: z.enum(['MARKETPLACE', 'PROVIDER', 'PARTNER', 'CLIENT']).optional(),
-  website: z.string().url().optional(),
+  website: z.string().url().optional().nullable(),
   email: z.string().email().optional(),
-  phone: z.string().optional(),
-  logoUrl: z.string().url().optional(),
+  phone: z.string().optional().nullable(),
+  logoUrl: z.string().url().optional().nullable(),
   isActive: z.boolean().optional(),
   settings: z.record(z.any()).optional(),
   metadata: z.record(z.any()).optional(),

@@ -6,6 +6,7 @@ import prisma from '../../../config/database';
 import { CsvChunker } from '../utils/csv-chunker';
 import { ErrorLogger } from './error-logger.service';
 import emailService from '@utils/email';
+// import { NotificationSettingsService } from '@services/notification-settings.service';
 import { config } from '@config/index';
 
 export class ArticleSyncService {
@@ -341,6 +342,8 @@ export class ArticleSyncService {
 
         // Send email notification
         try {
+          // Check if should notify based on settings
+          // TODO: Re-enable after TypeScript server restart
           const notificationEmails = config.email.orderNotificationEmails;
           
           if (notificationEmails && notificationEmails.length > 0 && notificationEmails[0]) {

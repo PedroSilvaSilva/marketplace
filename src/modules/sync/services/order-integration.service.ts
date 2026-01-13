@@ -2,6 +2,7 @@ import { SQLService } from '@/services/sql.service';
 import { Typs4YouClient } from '../clients/typs4you.client';
 import FormData from 'form-data';
 import logger from '@/config/logger';
+import { ErrorNotificationService } from '@services/error-notification.service';
 
 interface OrderIntegrationRecord {
   NumExterno: string;
@@ -127,8 +128,29 @@ export class OrderIntegrationService {
         exitMessage: apiResponse.ExitMessage
       });
 
+      const success = apiResponse.ExitCode === 0;
+
+      // Send error notification if failed
+      if (!success) {
+        await ErrorNotificationService.sendErrorNotification({
+          context: 'orders',
+          organizationId,
+          errorMessage: `Order ${orderID} integration notification failed: ${apiResponse.ExitMessage}`,
+          errorDetails: {
+            orderID,
+            exitCode: apiResponse.ExitCode,
+            exitMessage: apiResponse.ExitMessage,
+            errors: apiResponse.DataErrorsFound
+          },
+          stackTrace: null,
+          metadata: {
+            subscriptionKey
+          }
+        });
+      }
+
       return {
-        success: apiResponse.ExitCode === 0,
+        success,
         response: apiResponse
       };
     } catch (error: any) {
@@ -137,6 +159,22 @@ export class OrderIntegrationService {
         orderID,
         error: errorMessage
       });
+
+      // Send critical error notification
+      await ErrorNotificationService.sendErrorNotification({
+        context: 'orders',
+        organizationId,
+        errorMessage: `Order ${orderID} integration notification threw exception: ${errorMessage}`,
+        errorDetails: {
+          orderID,
+          errorType: error?.name || 'Unknown'
+        },
+        stackTrace: error?.stack,
+        metadata: {
+          subscriptionKey
+        }
+      });
+
       throw new Error(`Failed to notify order integration: ${errorMessage}`);
     }
   }

@@ -1,0 +1,164 @@
+# Test Error Notification API - Articles & Warehouse
+
+### 1. Get all error logs
+GET http://localhost:4000/api/v1/error-notifications
+Authorization: Bearer {{token}}
+
+###
+
+### 2. Get formatted error logs (with InternalPartNumber for articles/warehouse)
+GET http://localhost:4000/api/v1/error-notifications/formatted
+Authorization: Bearer {{token}}
+
+###
+
+### 3. Get only ARTICLES errors
+GET http://localhost:4000/api/v1/error-notifications?context=articles
+Authorization: Bearer {{token}}
+
+###
+
+### 4. Get only WAREHOUSE errors
+GET http://localhost:4000/api/v1/error-notifications?context=warehouse
+Authorization: Bearer {{token}}
+
+###
+
+### 5. Get only CUSTOMERS errors
+GET http://localhost:4000/api/v1/error-notifications?context=customers
+Authorization: Bearer {{token}}
+
+###
+
+### 6. Get only CUSTOMER_WAREHOUSE errors
+GET http://localhost:4000/api/v1/error-notifications?context=customerWarehouse
+Authorization: Bearer {{token}}
+
+###
+
+### 7. Get only DISCOUNT_GROUP errors
+GET http://localhost:4000/api/v1/error-notifications?context=discountGroup
+Authorization: Bearer {{token}}
+
+###
+
+### 8. Get recent errors (last 24 hours)
+GET http://localhost:4000/api/v1/error-notifications?hours=24
+Authorization: Bearer {{token}}
+
+###
+
+### 9. Get errors for specific organization
+GET http://localhost:4000/api/v1/error-notifications?organizationId={{orgId}}
+Authorization: Bearer {{token}}
+
+###
+
+### 10. Get error statistics
+GET http://localhost:4000/api/v1/error-notifications/stats/summary
+Authorization: Bearer {{token}}
+
+###
+
+### 11. Get specific error details
+GET http://localhost:4000/api/v1/error-notifications/{{errorId}}
+Authorization: Bearer {{token}}
+
+###
+
+### 12. Search errors by text
+GET http://localhost:4000/api/v1/error-notifications?search=BrandID
+Authorization: Bearer {{token}}
+
+###
+
+### 13. Get paginated results
+GET http://localhost:4000/api/v1/error-notifications?page=1&limit=20
+Authorization: Bearer {{token}}
+
+###
+
+### 14. Get errors sorted by newest first
+GET http://localhost:4000/api/v1/error-notifications?sortBy=createdAt&sortOrder=desc
+Authorization: Bearer {{token}}
+
+###
+
+### 15. Delete old errors (bulk)
+DELETE http://localhost:4000/api/v1/error-notifications/bulk/delete
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "olderThan": "2026-01-01T00:00:00Z"
+}
+
+###
+
+### 16. Manual test notification - Customers
+POST http://localhost:4000/api/v1/error-notifications/test
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "context": "customers",
+  "organizationId": "test-org-id",
+  "errorMessage": "Test customer sync error from API"
+}
+
+###
+
+### 17. Manual test notification - Discount Groups
+POST http://localhost:4000/api/v1/error-notifications/test
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "context": "discountGroup",
+  "organizationId": "test-org-id",
+  "errorMessage": "Test discount group sync error from API"
+}
+
+###
+
+### 18. Manual test notification - Discount SubGroups
+POST http://localhost:4000/api/v1/error-notifications/test
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "context": "discountSubGroup",
+  "organizationId": "test-org-id",
+  "errorMessage": "Test discount subgroup sync error from API"
+}
+
+###
+
+### 19. Manual test notification - Orders
+POST http://localhost:4000/api/v1/error-notifications/test
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "context": "orders",
+  "organizationId": "test-org-id",
+  "errorMessage": "Test order sync error from API"
+}
+
+###
+
+### 20. Get formatted error logs - Discount Groups
+GET http://localhost:4000/api/v1/error-notifications/formatted?context=discountGroup&limit=10
+Authorization: Bearer {{token}}
+
+###
+
+### 21. Get formatted error logs - Discount SubGroups
+GET http://localhost:4000/api/v1/error-notifications/formatted?context=discountSubGroup&limit=10
+Authorization: Bearer {{token}}
+
+###
+
+### 22. Get formatted error logs - Orders
+GET http://localhost:4000/api/v1/error-notifications/formatted?context=orders&limit=10
+Authorization: Bearer {{token}}

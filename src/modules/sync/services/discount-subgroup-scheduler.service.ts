@@ -4,6 +4,7 @@ import emailService from '@utils/email';
 import prisma from '@config/database';
 import logger from '@config/logger';
 import { config } from '@config/index';
+import { ErrorNotificationService } from '@services/error-notification.service';
 
 /**
  * Discount Sub-Group Scheduler Service
@@ -134,6 +135,38 @@ export class DiscountSubGroupSchedulerService {
         exitCode: apiResponse.ExitCode
       });
 
+      // Send error notification if there were failures
+      if (!success || errors.length > 0) {
+        const failedCodes = errors
+          .map((err: any) => {
+            const match = err.Error_Message?.match(/DiscountSubGroupCode[:\s]+([A-Z0-9-]+)/i);
+            return match ? match[1] : null;
+          })
+          .filter((code: any): code is string => code !== null)
+          .slice(0, 20);
+
+        await ErrorNotificationService.sendErrorNotification({
+          context: 'discountSubGroup',
+          organizationId,
+          errorMessage: `Discount sub-groups sync completed with ${count - loadedRecords} failures out of ${count} sent`,
+          errorDetails: {
+            sent: count,
+            loaded: loadedRecords,
+            failed: count - loadedRecords,
+            failureRate: `${((count - loadedRecords) / count * 100).toFixed(2)}%`,
+            exitCode: apiResponse.ExitCode,
+            errors: errors.slice(0, 10),
+            failedCodes
+          },
+          stackTrace: null,
+          metadata: {
+            syncConfigurationId,
+            providerConfigId,
+            executionLogId: logId
+          }
+        });
+      }
+
       // Update sync configuration with last success
       if (success) {
         await prisma.syncConfiguration.update({
@@ -223,6 +256,27 @@ export class DiscountSubGroupSchedulerService {
           }
         });
       }
+
+      // Send critical error notification
+      const syncConfig = await prisma.syncConfiguration.findUnique({
+        where: { id: syncConfigurationId }
+      });
+
+      await ErrorNotificationService.sendErrorNotification({
+        context: 'discountSubGroup',
+        organizationId: syncConfig?.organizationId || 'unknown',
+        errorMessage: `Discount sub-groups sync failed critically: ${errorMessage}`,
+        errorDetails: {
+          syncConfigurationId,
+          errorType: error instanceof Error ? error.name : 'Unknown',
+          duration: Date.now() - startTime
+        },
+        stackTrace: errorStack,
+        metadata: {
+          syncConfigurationId,
+          executionLogId: logId
+        }
+      });
 
       throw error;
     }

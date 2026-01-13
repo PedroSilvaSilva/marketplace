@@ -15,6 +15,7 @@ import { CustomerWarehouseSyncService } from '@modules/sync/services/customer-wa
 import { OrderIntegrationService } from '@modules/sync/services/order-integration.service';
 import { OrderSchedulerService } from '@modules/sync/services/order-scheduler.service';
 import { SyncType } from '@prisma/client';
+import { DailyReportService } from './daily-report.service';
 
 /**
  * Cron Scheduler Service
@@ -23,6 +24,7 @@ import { SyncType } from '@prisma/client';
 export class CronSchedulerService {
   private static instance: CronSchedulerService;
   private scheduledTasks: Map<string, cron.ScheduledTask> = new Map();
+  private runningTasks: Set<string> = new Set(); // Track running tasks to prevent overlaps
   private isRunning = false;
 
   private constructor() {}
@@ -45,6 +47,9 @@ export class CronSchedulerService {
 
     this.isRunning = true;
     logger.info('[CronScheduler] Starting...');
+
+    // Schedule daily report (every day at 23:00)
+    this.scheduleDailyReport();
 
     // Load all sync configurations and schedule them
     await this.loadAndScheduleAll();
@@ -123,11 +128,20 @@ export class CronSchedulerService {
   }
 
   /**
-   * Execute a sync task
+   * Execute a sync task with lock to prevent concurrent executions
    */
   private async executeSyncTask(config: any): Promise<void> {
     const { id, organizationId, providerConfigId, syncType } = config;
+    const taskKey = `${organizationId}-${providerConfigId}-${syncType}`;
 
+    // Check if this task is already running
+    if (this.runningTasks.has(taskKey)) {
+      logger.warn(`[CronScheduler] ${syncType} for org ${organizationId} is already running, skipping...`);
+      return;
+    }
+
+    // Mark task as running
+    this.runningTasks.add(taskKey);
     logger.info(`[CronScheduler] Executing ${syncType} for org ${organizationId}`);
 
     try {
@@ -161,7 +175,10 @@ export class CronSchedulerService {
           result = await CustomerSyncService.sendCustomersToTypsForYou(
             organizationId,
             providerConfigId,
-            config.options || {}
+            {
+              ...(config.options || {}),
+              syncConfigurationId: id
+            }
           );
           break;
 
@@ -169,7 +186,10 @@ export class CronSchedulerService {
           result = await CustomerDiscountGroupSyncService.sendCustomerDiscountGroupsToTypsForYou(
             organizationId,
             providerConfigId,
-            config.options || {}
+            {
+              ...(config.options || {}),
+              syncConfigurationId: id
+            }
           );
           break;
 
@@ -177,7 +197,10 @@ export class CronSchedulerService {
           result = await CustomerWarehouseSyncService.sendCustomerWarehousesToTypsForYou(
             organizationId,
             providerConfigId,
-            config.options || {}
+            {
+              ...(config.options || {}),
+              syncConfigurationId: id
+            }
           );
           break;
 
@@ -230,16 +253,22 @@ export class CronSchedulerService {
           lastErrorAt: new Date()
         }
       });
+    } finally {
+      // Always remove from running tasks when done
+      this.runningTasks.delete(taskKey);
+      logger.debug(`[CronScheduler] Released lock for ${taskKey}`);
     }
   }
 
   /**
    * Convert interval in seconds to cron expression
+   * Enforces minimum interval of 60 seconds to prevent overlapping executions
    */
   private intervalToCron(intervalSeconds: number): string {
-    // Every X seconds (1-59) - 6 fields with seconds
+    // Enforce minimum interval of 60 seconds to prevent system overload
     if (intervalSeconds < 60) {
-      return `*/${intervalSeconds} * * * * *`;
+      logger.warn(`[CronScheduler] Interval ${intervalSeconds}s is too short, using 60s minimum`);
+      intervalSeconds = 60;
     }
 
     // Every X minutes - MUST use 6 fields (node-cron requires seconds field)
@@ -266,6 +295,25 @@ export class CronSchedulerService {
       logger.debug('[CronScheduler] Checking for configuration updates...');
       await this.loadAndScheduleAll();
     });
+  }
+
+  /**
+   * Schedule daily success report (every day at 23:00)
+   */
+  private scheduleDailyReport(): void {
+    // Schedule for 23:00 (11 PM) every day
+    const task = cron.schedule('0 23 * * *', async () => {
+      try {
+        logger.info('[CronScheduler] Sending daily success report...');
+        await DailyReportService.sendDailySuccessReport();
+        logger.info('[CronScheduler] Daily success report sent successfully');
+      } catch (error) {
+        logger.error('[CronScheduler] Failed to send daily report:', error);
+      }
+    });
+
+    this.scheduledTasks.set('daily-report', task);
+    logger.info('[CronScheduler] ✅ Daily report scheduled for 23:00 every day');
   }
 
   /**

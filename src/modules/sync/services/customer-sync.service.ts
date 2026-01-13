@@ -2,6 +2,8 @@ import { SQLService } from '../../../services/sql.service';
 import { Typs4YouClient } from '../clients/typs4you.client';
 import logger from '../../../config/logger';
 import { AppError } from '../../../utils/errors';
+import { ErrorNotificationService } from '@services/error-notification.service';
+import prisma from '@config/database';
 
 export class CustomerSyncService {
   /**
@@ -12,6 +14,7 @@ export class CustomerSyncService {
     organizationId: string,
     options?: {
       customerId?: string;
+      lastSyncDate?: Date;
     }
   ): Promise<{
     csv: string;
@@ -19,8 +22,12 @@ export class CustomerSyncService {
   }> {
     logger.info('Generating customers CSV...', { organizationId, options });
 
-    // Fetch customers from SQL Server
-    const customers = await SQLService.getCustomers(organizationId, options?.customerId);
+    // Fetch customers from SQL Server (incremental if lastSyncDate provided)
+    const customers = await SQLService.getCustomers(
+      organizationId, 
+      options?.customerId,
+      options?.lastSyncDate
+    );
 
     if (!customers || customers.length === 0) {
       logger.info('No customers found');
@@ -66,19 +73,40 @@ export class CustomerSyncService {
       // Get VatId - check multiple possible field names
       const vatId = customer.VatId || customer.VAT_ID || customer.NIF || customer.VAT || customer.TaxId || customer.TaxID || '';
       
+      // Clean email - take only first email if multiple are present, remove spaces and semicolons
+      let email = String(customer.Email || '').trim();
+      if (email.includes(';') || email.includes(',')) {
+        // Take first email and clean it
+        email = email.split(/[;,]/)[0].trim();
+      }
+      email = email.replace(/\s+/g, ''); // Remove all spaces
+      
+      // Clean DiscountGroupCode - if it's "N/A" or similar, use empty string
+      let discountGroupCode = String(customer.DiscountGroupCode || '').trim().toUpperCase();
+      if (discountGroupCode === 'N/A' || discountGroupCode === 'NA' || discountGroupCode === 'NULL') {
+        discountGroupCode = '';
+      }
+      
+      // Clean Login - take first email if using email field
+      let login = customer.Login || email || customer.CustomerID || '';
+      if (login.includes(';') || login.includes(',')) {
+        login = login.split(/[;,]/)[0].trim();
+      }
+      login = String(login).replace(/\s+/g, '');
+      
       const row = [
-        customer.DiscountGroupCode || '', // Usar o DiscountGroupCode do cliente
+        discountGroupCode,
         customer.CustomerID || '',
         customer.Name || customer.CustomerName || customer.Contact || customer.ContactName || 'Cliente',
         customer.Address || '',
         city,
         zip,
         country,
-        customer.Email || '',
+        email,
         String(customer.Phone || customer.Telephone || '').trim(),
         customer.Contact || customer.ContactName || '',
         vatId,
-        customer.Login || customer.Email || customer.CustomerID || '',
+        login,
         customer.Password || '123456',
         customer.Active === 0 || customer.Active === false ? '0' : '1',
         customer.Currency || 'EUR',
@@ -120,6 +148,8 @@ export class CustomerSyncService {
     providerConfigId: string,
     options?: {
       customerId?: string;
+      syncConfigurationId?: string;
+      lastSyncDate?: Date;
     }
   ): Promise<{
     success: boolean;
@@ -127,18 +157,71 @@ export class CustomerSyncService {
     loadedRecords: number;
     apiResponse: unknown;
   }> {
+    const startTime = Date.now();
+    let logId: string | undefined;
+    
     try {
+      // Get last successful sync date for incremental sync
+      let lastSyncDate = options?.lastSyncDate;
+      if (!lastSyncDate && options?.syncConfigurationId) {
+        const lastSuccessfulLog = await prisma.syncExecutionLog.findFirst({
+          where: {
+            syncConfigurationId: options.syncConfigurationId,
+            status: 'SUCCESS'
+          },
+          orderBy: { completedAt: 'desc' }
+        });
+        lastSyncDate = lastSuccessfulLog?.completedAt || undefined;
+      }
+
       logger.info('Starting customers sync to TypsForYou...', {
         organizationId,
         providerConfigId,
-        options
+        options,
+        mode: lastSyncDate ? 'incremental' : 'full',
+        lastSyncDate: lastSyncDate?.toISOString()
       });
 
-      // Generate CSV
-      const csvResult = await this.generateCustomersCsv(organizationId, options);
+      // Create execution log entry
+      const executionLog = await prisma.syncExecutionLog.create({
+        data: {
+          syncConfigurationId: options?.syncConfigurationId,
+          organizationId,
+          providerConfigId,
+          syncType: 'CUSTOMERS',
+          status: 'RUNNING',
+          startedAt: new Date(),
+          metadata: {
+            mode: lastSyncDate ? 'incremental' : 'full',
+            lastSyncDate: lastSyncDate?.toISOString()
+          }
+        }
+      });
+      logId = executionLog.id;
+
+      // Generate CSV (incremental if lastSyncDate available)
+      const csvResult = await this.generateCustomersCsv(organizationId, {
+        ...options,
+        lastSyncDate
+      });
 
       if (csvResult.count === 0) {
         logger.info('No customers to send');
+        
+        // Update log as success with no items
+        await prisma.syncExecutionLog.update({
+          where: { id: logId },
+          data: {
+            status: 'SUCCESS',
+            completedAt: new Date(),
+            duration: Date.now() - startTime,
+            totalFetched: 0,
+            totalProcessed: 0,
+            totalSucceeded: 0,
+            totalFailed: 0
+          }
+        });
+        
         return {
           success: true,
           sent: 0,
@@ -164,6 +247,20 @@ export class CustomerSyncService {
           loadedRecords
         });
 
+        // Update log with success results
+        await prisma.syncExecutionLog.update({
+          where: { id: logId },
+          data: {
+            status: 'SUCCESS',
+            completedAt: new Date(),
+            duration: Date.now() - startTime,
+            totalFetched: csvResult.count,
+            totalProcessed: csvResult.count,
+            totalSucceeded: loadedRecords,
+            totalFailed: csvResult.count - loadedRecords
+          }
+        });
+
         return {
           success: true,
           sent: csvResult.count,
@@ -176,6 +273,52 @@ export class CustomerSyncService {
           errors: response.DataErrorsFound
         });
 
+        // Extract failed CustomerIDs from errors
+        const errors = response.DataErrorsFound || [];
+        const failedCustomerIds = errors
+          .map((err: any) => {
+            const match = err.Error_Message?.match(/CustomerID[:\s]+([A-Z0-9-]+)/i);
+            return match ? match[1] : null;
+          })
+          .filter((id: any): id is string => id !== null)
+          .slice(0, 20);
+
+        // Send error notification
+        await ErrorNotificationService.sendErrorNotification({
+          context: 'customers',
+          organizationId,
+          errorMessage: `Customers sync failed: ${response.ExitMesssage || 'Unknown error'}`,
+          errorDetails: {
+            sent: csvResult.count,
+            loaded: loadedRecords,
+            failed: csvResult.count - loadedRecords,
+            exitCode,
+            errors: errors.slice(0, 10),
+            failedCustomerIds
+          },
+          stackTrace: null,
+          metadata: {
+            providerConfigId,
+            executionLogId: logId
+          }
+        });
+        
+        // Update log as partial/failed
+        const executionStatus = loadedRecords > 0 ? 'PARTIAL' : 'FAILED';
+        await prisma.syncExecutionLog.update({
+          where: { id: logId },
+          data: {
+            status: executionStatus,
+            completedAt: new Date(),
+            duration: Date.now() - startTime,
+            totalFetched: csvResult.count,
+            totalProcessed: csvResult.count,
+            totalSucceeded: loadedRecords,
+            totalFailed: csvResult.count - loadedRecords,
+            errorMessage: response.ExitMesssage || 'Unknown error'
+          }
+        });
+
         throw new AppError(
           `Failed to upload customers: ${response.ExitMesssage || 'Unknown error'}. Errors: ${JSON.stringify(response.DataErrorsFound)}`,
           400
@@ -183,7 +326,42 @@ export class CustomerSyncService {
       }
 
     } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorStack = error instanceof Error ? error.stack : undefined;
+      
       logger.error('Failed to send customers to TypsForYou:', error);
+
+      // Update log as failed
+      if (logId) {
+        await prisma.syncExecutionLog.update({
+          where: { id: logId },
+          data: {
+            status: 'FAILED',
+            completedAt: new Date(),
+            duration: Date.now() - startTime,
+            errorMessage,
+            errorStack
+          }
+        });
+      }
+
+      // Send critical error notification
+      if (error instanceof Error && !error.message.includes('Failed to upload customers')) {
+        await ErrorNotificationService.sendErrorNotification({
+          context: 'customers',
+          organizationId,
+          errorMessage: `Customers sync failed critically: ${error.message}`,
+          errorDetails: {
+            errorType: error.name,
+            providerConfigId
+          },
+          stackTrace: error.stack,
+          metadata: {
+            providerConfigId
+          }
+        });
+      }
+
       throw error;
     }
   }
@@ -252,6 +430,35 @@ export class CustomerSyncService {
           errors: response.DataErrorsFound
         });
 
+        // Extract failed CustomerIDs from errors
+        const errors = response.DataErrorsFound || [];
+        const failedCustomerIds = errors
+          .map((err: any) => {
+            const match = err.Error_Message?.match(/CustomerID[:\s]+([A-Z0-9-]+)/i);
+            return match ? match[1] : null;
+          })
+          .filter((id: any): id is string => id !== null)
+          .slice(0, 20);
+
+        // Send error notification
+        await ErrorNotificationService.sendErrorNotification({
+          context: 'customers',
+          organizationId,
+          errorMessage: `Customers update failed: ${response.ExitMesssage || 'Unknown error'}`,
+          errorDetails: {
+            sent: csvResult.count,
+            loaded: loadedRecords,
+            failed: csvResult.count - loadedRecords,
+            exitCode,
+            errors: errors.slice(0, 10),
+            failedCustomerIds
+          },
+          stackTrace: null,
+          metadata: {
+            providerConfigId
+          }
+        });
+
         throw new AppError(
           `Failed to update customers: ${response.ExitMesssage || 'Unknown error'}. Errors: ${JSON.stringify(response.DataErrorsFound)}`,
           400
@@ -260,6 +467,24 @@ export class CustomerSyncService {
 
     } catch (error: unknown) {
       logger.error('Failed to update customers in TypsForYou:', error);
+
+      // Send critical error notification
+      if (error instanceof Error && !error.message.includes('Failed to update customers')) {
+        await ErrorNotificationService.sendErrorNotification({
+          context: 'customers',
+          organizationId,
+          errorMessage: `Customers update failed critically: ${error.message}`,
+          errorDetails: {
+            errorType: error.name,
+            providerConfigId
+          },
+          stackTrace: error.stack,
+          metadata: {
+            providerConfigId
+          }
+        });
+      }
+
       throw error;
     }
   }

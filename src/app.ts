@@ -24,6 +24,9 @@ import sqlDataRoutes from '@modules/sync/sql-data.routes';
 import syncConfigRoutes from '@modules/sync/sync-config.routes';
 import syncLogsRoutes from '@modules/sync/routes/sync-logs.routes';
 import integrationStatsRoutes from '@modules/integration/integration-stats.routes';
+import errorNotificationsRoutes from '@modules/error-notifications/error-notifications.routes';
+import dailyReportsRoutes from '@modules/daily-reports/daily-reports.routes';
+// import notificationSettingsRoutes from '@routes/notification-settings.routes';
 
 class App {
   public app: Application;
@@ -137,6 +140,9 @@ class App {
     this.app.use(`${apiPrefix}/sync-config`, syncConfigRoutes);
     this.app.use(`${apiPrefix}/sync-logs`, syncLogsRoutes);
     this.app.use(`${apiPrefix}/integration/stats`, integrationStatsRoutes);
+    this.app.use(`${apiPrefix}/error-notifications`, errorNotificationsRoutes);
+    this.app.use(`${apiPrefix}/daily-reports`, dailyReportsRoutes);
+    // this.app.use(`${apiPrefix}/notification-settings`, notificationSettingsRoutes);
 
     logger.info('✅ Routes initialized successfully');
   }
