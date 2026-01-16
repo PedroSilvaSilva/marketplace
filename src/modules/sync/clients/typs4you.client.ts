@@ -13,6 +13,46 @@ interface TokenCache {
 }
 
 /**
+ * Helper function to retry API calls on DNS resolution errors (EAI_AGAIN)
+ */
+async function retryOnDnsError<T>(
+  fn: () => Promise<T>,
+  maxRetries = 3,
+  delayMs = 2000
+): Promise<T> {
+  let lastError: Error | undefined;
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (error: any) {
+      lastError = error;
+      
+      // Check if it's a DNS error (EAI_AGAIN or ENOTFOUND)
+      const isDnsError = error.code === 'EAI_AGAIN' || 
+                        error.code === 'ENOTFOUND' ||
+                        error.message?.includes('getaddrinfo');
+      
+      if (isDnsError && attempt < maxRetries) {
+        const delay = delayMs * attempt; // Exponential backoff
+        logger.warn(`Erro DNS temporário detectado (${error.code}). Tentativa ${attempt}/${maxRetries}. Aguardando ${delay}ms antes de tentar novamente...`, {
+          error: error.message,
+          attempt,
+          maxRetries
+        });
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
+      
+      // If not a DNS error or max retries reached, throw the error
+      throw error;
+    }
+  }
+  
+  throw lastError;
+}
+
+/**
  * TypsForYou API Client
  * Handles authentication and API calls to TypsForYou marketplace
  */
@@ -28,7 +68,7 @@ export class Typs4YouClient {
     
     // Create axios instance with default config
     this.axiosInstance = axios.create({
-      timeout: 30000,
+      timeout: 120000, // 2 minutes for order fetching (was 30s)
       headers: {
         'Content-Type': 'application/json'
       }
@@ -41,7 +81,8 @@ export class Typs4YouClient {
         logger.error('TypsForYou API Error:', {
           status: error.response?.status,
           data: error.response?.data,
-          url: error.config?.url
+          url: error.config?.url,
+          code: error.code
         });
         throw error;
       }
@@ -118,13 +159,17 @@ export class Typs4YouClient {
 
       logger.info('Form data:', formData);
 
-      // Make authentication request
-      const response = await this.axiosInstance.post(authUrl, formData, {
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'Ocp-Apim-Subscription-Key': subscriptionKey
-        }
-      });
+      // Make authentication request with retry logic for DNS errors
+      const response = await retryOnDnsError(
+        () => this.axiosInstance.post(authUrl, formData, {
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Ocp-Apim-Subscription-Key': subscriptionKey
+          }
+        }),
+        3, // 3 retries
+        2000 // 2 second initial delay with exponential backoff
+      );
 
       // Extract token from response (TypsForYou returns "Token" with capital T)
       const token = response.data?.Token;
@@ -1356,14 +1401,18 @@ export class Typs4YouClient {
         hasSubscriptionKey: !!subscriptionKey
       });
 
-      // Make request with Token header and subscription key
-      const response = await this.axiosInstance.get(url, {
-        headers: {
-          'Token': token,
-          'Ocp-Apim-Subscription-Key': subscriptionKey,
-          'Accept': 'application/json'
-        }
-      });
+      // Make request with retry logic for DNS errors (wrapped in retryOnDnsError)
+      const response = await retryOnDnsError(
+        () => this.axiosInstance.get(url, {
+          headers: {
+            'Token': token,
+            'Ocp-Apim-Subscription-Key': subscriptionKey,
+            'Accept': 'application/json'
+          }
+        }),
+        3, // 3 retries
+        2000 // 2 second initial delay with exponential backoff
+      );
 
       logger.info('Orders fetched successfully', {
         count: Array.isArray(response.data?.Orders_Table) ? response.data.Orders_Table.length : 'unknown'

@@ -74,7 +74,60 @@ router.post('/test-auth/:providerConfigId', asyncHandler(async (req: Request, re
   });
 }));
 
-// Apply authentication to all routes except test-auth
+/**
+ * @swagger
+ * /sync/force-customer-sync/{organizationId}/{providerConfigId}:
+ *   post:
+ *     summary: Force customer sync to TypsForYou (no auth required - for cron/manual)
+ *     tags: [Sync]
+ *     parameters:
+ *       - in: path
+ *         name: organizationId
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Organization ID
+ *       - in: path
+ *         name: providerConfigId
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Provider configuration ID
+ *       - in: query
+ *         name: customerId
+ *         schema:
+ *           type: string
+ *         description: Optional - sync specific customer only
+ *     responses:
+ *       200:
+ *         description: Customers sent successfully
+ */
+router.post('/force-customer-sync/:organizationId/:providerConfigId', asyncHandler(async (req: Request, res: Response) => {
+  const { organizationId, providerConfigId } = req.params;
+  const { customerId } = req.query;
+
+  logger.info('Force customer sync triggered', { organizationId, providerConfigId, customerId });
+
+  const result = await CustomerSyncService.sendCustomersToTypsForYou(
+    organizationId,
+    providerConfigId,
+    {
+      customerId: customerId as string
+    }
+  );
+
+  res.json({
+    success: result.success,
+    message: result.success 
+      ? `Successfully sent ${result.sent} customers, ${result.loadedRecords} loaded by API`
+      : `Failed to send customers`,
+    data: result
+  });
+}));
+
+// Apply authentication to all routes except test-auth and force-customer-sync
 router.use(authenticate);
 
 /**

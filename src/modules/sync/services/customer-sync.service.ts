@@ -8,7 +8,8 @@ import prisma from '@config/database';
 export class CustomerSyncService {
   /**
    * Generate customers CSV from SQL Server view
-   * Format: DiscountGroupCode;CustomerID;Name;Address;City;Country;Email;Phone;Contact;VatId;Login;Password;NIF;Currency;WebSiteUrl;Tag;ReservedForFutureUse
+   * Format: DiscountGroupCode;CustomerID;Name;Address;City;Zip;Country;Email;Phone;Contact;VatId;Login;Password;Active;Currency;WebSiteUrl;Tag;ReservedForFutureUse
+   * EXACTLY 18 columns required by TypsForYou API
    */
   static async generateCustomersCsv(
     organizationId: string,
@@ -81,10 +82,16 @@ export class CustomerSyncService {
       }
       email = email.replace(/\s+/g, ''); // Remove all spaces
       
-      // Clean DiscountGroupCode - if it's "N/A" or similar, use empty string
-      let discountGroupCode = String(customer.DiscountGroupCode || '').trim().toUpperCase();
-      if (discountGroupCode === 'N/A' || discountGroupCode === 'NA' || discountGroupCode === 'NULL') {
-        discountGroupCode = '';
+      // Clean DiscountGroupCode - TypsForYou only accepts EXCELENCIA
+      // Convert any variation of N/A to EXCELENCIA
+      let discountGroupCode = String(customer.DiscountGroupCode || '').trim();
+      
+      // If empty, .N/A, N/A or any variation, use EXCELENCIA
+      if (!discountGroupCode || 
+          discountGroupCode === '.N/A' || 
+          discountGroupCode === 'N/A' ||
+          discountGroupCode.toUpperCase().includes('N/A')) {
+        discountGroupCode = 'EXCELENCIA';
       }
       
       // Clean Login - take first email if using email field
@@ -94,26 +101,54 @@ export class CustomerSyncService {
       }
       login = String(login).replace(/\s+/g, '');
       
+      // TypsForYou API requires EXACTLY 18 columns:
+      // DiscountGroupCode;CustomerID;Name;Address;City;Zip;Country;Email;Phone;Contact;VatId;Login;Password;Active;Currency;WebShopId;Tag;ReservedForFutureUse
       const row = [
-        discountGroupCode,
-        customer.CustomerID || '',
-        customer.Name || customer.CustomerName || customer.Contact || customer.ContactName || 'Cliente',
-        customer.Address || '',
-        city,
-        zip,
-        country,
-        email,
-        String(customer.Phone || customer.Telephone || '').trim(),
-        customer.Contact || customer.ContactName || '',
-        vatId,
-        login,
-        customer.Password || '123456',
-        customer.Active === 0 || customer.Active === false ? '0' : '1',
-        customer.Currency || 'EUR',
-        customer.WebSiteUrl || customer.Website || '',
-        customer.Tag || '',
-        customer.ReservedForFutureUse || ''
+        discountGroupCode,           // 1
+        customer.CustomerID || '',   // 2
+        customer.Name || customer.CustomerName || customer.Contact || customer.ContactName || 'Cliente', // 3
+        customer.Address || '',      // 4
+        city,                        // 5
+        zip,                         // 6
+        country,                     // 7
+        email,                       // 8
+        String(customer.Phone || customer.Telephone || '').trim(), // 9
+        customer.Contact || customer.ContactName || '', // 10
+        vatId,                       // 11
+        login,                       // 12
+        customer.Password || '123456', // 13
+        customer.Active === 0 || customer.Active === false ? '0' : '1', // 14
+        customer.Currency || 'EUR',  // 15
+        customer.CustomerID || '',   // 16 - Force WebShopId to match CustomerID as requested
+        customer.Tag || '',          // 17
+        customer.ReservedForFutureUse || '' // 18
       ];
+
+      // Log first customer row fields for debugging
+      if (csvRows.length === 0) {
+        logger.info('First customer row fields (18 columns):', {
+          '1_discountGroupCode': discountGroupCode,
+          '2_customerID': customer.CustomerID,
+          '3_name': customer.Name,
+          '4_address': customer.Address,
+          '5_city': city,
+          '6_zip': zip,
+          '7_country': country,
+          '8_email': email,
+          '9_phone': customer.Phone,
+          '10_contact': customer.Contact,
+          '11_vatId': vatId,
+          '12_login': login,
+          '13_password': '***',
+          '14_active': customer.Active,
+          '15_currency': customer.Currency,
+          '16_webShopId': customer.CustomerID,
+          '17_tag': customer.Tag,
+          '18_reserved': customer.ReservedForFutureUse,
+          totalFields: row.length,
+          rowArray: row
+        });
+      }
 
       // Join with semicolon and trim whitespace
       const csvLine = row.map(field => 
@@ -350,7 +385,7 @@ export class CustomerSyncService {
         await ErrorNotificationService.sendErrorNotification({
           context: 'customers',
           organizationId,
-          errorMessage: `Customers sync failed critically: ${error.message}`,
+          errorMessage: `Sincronização de clientes falhou: ${error.message}`,
           errorDetails: {
             errorType: error.name,
             providerConfigId

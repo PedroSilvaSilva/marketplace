@@ -12,12 +12,18 @@ export class SQLService {
   /**
    * Get or create connection pool for an organization
    */
-  static async getPool(organizationId: string): Promise<sql.ConnectionPool> {
+  static async getPool(organizationId: string, retryCount: number = 0): Promise<sql.ConnectionPool> {
+    const MAX_RETRIES = 3;
+    const RETRY_DELAY = 2000; // 2 seconds
+
     // Check if pool already exists
     if (this.pools.has(organizationId)) {
       const pool = this.pools.get(organizationId)!;
       if (pool.connected) {
         return pool;
+      } else {
+        // Pool exists but disconnected, remove it
+        this.pools.delete(organizationId);
       }
     }
 
@@ -58,14 +64,66 @@ export class SQLService {
       requestTimeout: config.requestTimeout || 60000 // Increased from 30000 for heavy queries
     };
 
-    // Create and connect pool
-    const pool = new sql.ConnectionPool(sqlConfig);
-    await pool.connect();
+    try {
+      // Create and connect pool
+      const pool = new sql.ConnectionPool(sqlConfig);
+      await pool.connect();
 
-    // Store pool
-    this.pools.set(organizationId, pool);
+      // Store pool
+      this.pools.set(organizationId, pool);
 
-    return pool;
+      return pool;
+    } catch (error: any) {
+      const isNetworkError = error.code === 'ENOTFOUND' || 
+                            error.code === 'ETIMEDOUT' || 
+                            error.code === 'ECONNREFUSED' ||
+                            error.message?.includes('getaddrinfo');
+
+      // Retry logic for network errors
+      if (isNetworkError && retryCount < MAX_RETRIES) {
+        const attempt = retryCount + 1;
+        const delay = RETRY_DELAY * attempt; // Exponential backoff
+        
+        console.warn(`[SQLService] Connection failed (attempt ${attempt}/${MAX_RETRIES}). Retrying in ${delay}ms...`, {
+          organizationId,
+          server: config.sqlHost,
+          error: error.message
+        });
+
+        await new Promise(resolve => setTimeout(resolve, delay));
+        return this.getPool(organizationId, attempt);
+      }
+
+      // Provide more helpful error message in Portuguese
+      if (isNetworkError) {
+        const detailedMessage = [
+          `❌ ERRO DE CONEXÃO SQL SERVER`,
+          ``,
+          `Servidor: ${config.sqlHost}`,
+          `Banco de Dados: ${config.sqlDatabase}`,
+          ``,
+          `🔍 Diagnóstico:`,
+          `- O servidor "${config.sqlHost}" não está acessível`,
+          `- Erro técnico: ${error.code || 'NETWORK_ERROR'} - ${error.message}`,
+          ``,
+          `✅ Possíveis Soluções:`,
+          `1. Verifique se a VPN está conectada`,
+          `2. Confirme que o servidor SQL está online (ping ${config.sqlHost})`,
+          `3. Verifique se o firewall não está bloqueando a porta 1433`,
+          `4. Valide o nome do servidor na configuração`,
+          ``,
+          `💡 Para testar conectividade:`,
+          `   PowerShell: Test-NetConnection -ComputerName ${config.sqlHost} -Port 1433`
+        ].join('\n');
+
+        throw new AppError(detailedMessage, 503);
+      }
+
+      throw new AppError(
+        `Falha na conexão SQL: ${error.message}. Verifique as credenciais e configurações do banco de dados.`,
+        500
+      );
+    }
   }
 
   /**
@@ -531,8 +589,31 @@ export class SQLService {
       throw new AppError('Customer view not configured', 400);
     }
 
-    // Use SELECT * to get all available columns
-    let query = `SELECT * FROM ${config.customerView}`;
+    // Explicit SELECT with all required fields (including CustomerID which was missing)
+    let query = `
+      SELECT 
+        [CustomerID]
+        ,[Nome] as Name
+        ,[Address]
+        ,[City]
+        ,[Zip]
+        ,[Country]
+        ,[Email]
+        ,[Phone]
+        ,[Contact]
+        ,[VAT_ID]
+        ,[Login]
+        ,[Password]
+        ,[Active]
+        ,[Currency]
+        ,[WebShopId]
+        ,[Tag]
+        ,[ReservedForFutureUse]
+        ,[DataCriacao]
+        ,[DataAlteracao]
+        ,[DiscountGroupCode]
+      FROM ${config.customerView}
+    `;
     
     const conditions: string[] = [];
     
